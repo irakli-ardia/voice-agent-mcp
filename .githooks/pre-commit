@@ -1,0 +1,3 @@
+#!/bin/sh
+# Fast staged-only formatting and lint; the full gate runs on pre-push and in CI.
+exec npx biome check --staged --no-errors-on-unmatched

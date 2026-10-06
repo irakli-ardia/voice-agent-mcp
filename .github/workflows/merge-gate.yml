@@ -1,0 +1,25 @@
+name: Merge gate
+
+# Fails while a PR carries `do-not-merge`. Add it when local verification was not run or not
+# confirmed green, and remove it only after it was (CONTRIBUTING.md → Pull requests).
+# Make this a required status check in branch protection.
+on:
+  pull_request:
+    types: [opened, reopened, synchronize, labeled, unlabeled]
+
+permissions: {}
+
+concurrency:
+  group: merge-gate-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  do-not-merge:
+    runs-on: ubuntu-latest
+    timeout-minutes: 1
+    steps:
+      - name: Block while labelled do-not-merge
+        if: contains(github.event.pull_request.labels.*.name, 'do-not-merge')
+        run: |
+          echo "::error::do-not-merge: local checks were not run or not verified. Run them, then remove the label."
+          exit 1

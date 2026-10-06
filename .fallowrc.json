@@ -1,0 +1,38 @@
+{
+  "$schema": "https://raw.githubusercontent.com/fallow-rs/fallow/main/schema.json",
+  "entry": ["scripts/**/*.mjs", "src/entrypoints/voice-agent.ts"],
+  "ignorePatterns": ["tools/oxlint/anti-slop/**"],
+  "ignoreDependencies": ["@oxlint/plugins"],
+  "health": {
+    "thresholdOverrides": [
+      {
+        "files": ["scripts/**"],
+        "maxCognitive": 30,
+        "maxCrap": 1000,
+        "reason": "Repository tooling scripts (docs check, git conventions) have no unit tests, so CRAP is not meaningful; cognitive ceiling matches the documented split trigger (30). Product code under src/ keeps the defaults."
+      }
+    ]
+  },
+  "boundaries": {
+    "zones": [
+      { "name": "domain", "patterns": ["src/domain/**"] },
+      { "name": "ports", "patterns": ["src/ports/**"] },
+      { "name": "tools", "patterns": ["src/tools/**"] },
+      { "name": "app", "patterns": ["src/app/**"] },
+      { "name": "adapters", "patterns": ["src/adapters/**"] },
+      { "name": "config", "patterns": ["src/config/**"] },
+      { "name": "bootstrap", "patterns": ["src/bootstrap/**"] },
+      { "name": "entrypoints", "patterns": ["src/entrypoints/**"] }
+    ],
+    "rules": [
+      { "from": "domain", "allow": [] },
+      { "from": "ports", "allow": ["domain"] },
+      { "from": "tools", "allow": ["domain", "ports"] },
+      { "from": "app", "allow": ["domain", "ports", "tools"] },
+      { "from": "adapters", "allow": ["domain", "ports", "app", "tools", "config"] },
+      { "from": "config", "allow": [] },
+      { "from": "bootstrap", "allow": ["domain", "ports", "app", "tools", "adapters", "config"] },
+      { "from": "entrypoints", "allow": ["domain", "ports", "config", "bootstrap"] }
+    ]
+  }
+}

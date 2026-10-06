@@ -1,0 +1,2 @@
+#!/bin/sh
+exec node scripts/git/conventions.mjs title "$(sed -n '1p' "$1")"

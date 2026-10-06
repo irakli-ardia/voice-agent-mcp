@@ -1,0 +1,232 @@
+{
+  "$schema": "./node_modules/@biomejs/biome/configuration_schema.json",
+  "vcs": {
+    "enabled": true,
+    "clientKind": "git",
+    "useIgnoreFile": true
+  },
+  "files": {
+    "includes": ["**", "!tools/oxlint/anti-slop"]
+  },
+  "formatter": {
+    "indentStyle": "space",
+    "indentWidth": 2,
+    "lineWidth": 100
+  },
+  "linter": {
+    "enabled": true,
+    "rules": {
+      "preset": "recommended",
+      "style": {
+        "noNestedTernary": "error",
+        "useBlockStatements": "error",
+        "noNonNullAssertion": "error",
+        "noParameterAssign": "error",
+        "noProcessEnv": "error",
+        "useFilenamingConvention": {
+          "level": "error",
+          "options": {
+            "strictCase": true,
+            "requireAscii": true,
+            "filenameCases": ["kebab-case"]
+          }
+        }
+      },
+      "suspicious": {
+        "noExplicitAny": "error",
+        "noImportCycles": "error",
+        "noConsole": "error"
+      },
+      "complexity": {
+        "noExcessiveCognitiveComplexity": "error",
+        "noExcessiveLinesPerFunction": {
+          "level": "error",
+          "options": { "maxLines": 60, "skipBlankLines": true }
+        }
+      },
+      "nursery": {
+        "noFloatingPromises": "error",
+        "noMisusedPromises": "error"
+      },
+      "performance": {
+        "noReExportAll": "error"
+      }
+    }
+  },
+  "overrides": [
+    {
+      "includes": ["scripts/**"],
+      "linter": {
+        "rules": {
+          "style": { "noProcessEnv": "off" },
+          "suspicious": { "noConsole": "off" },
+          "complexity": {
+            "noExcessiveCognitiveComplexity": {
+              "level": "error",
+              "options": { "maxAllowedComplexity": 30 }
+            }
+          }
+        }
+      }
+    },
+    {
+      "includes": ["tests/**"],
+      "linter": {
+        "rules": {
+          "complexity": { "noExcessiveLinesPerFunction": "off" }
+        }
+      }
+    },
+    {
+      "includes": ["src/config/**"],
+      "linter": {
+        "rules": {
+          "style": { "noProcessEnv": "off" }
+        }
+      }
+    },
+    {
+      "includes": ["src/ports/**", "src/app/**", "src/tools/**"],
+      "linter": {
+        "rules": {
+          "style": {
+            "noRestrictedImports": {
+              "level": "error",
+              "options": {
+                "patterns": [
+                  {
+                    "group": [
+                      "openai",
+                      "openai/**",
+                      "@modelcontextprotocol/**",
+                      "pino",
+                      "pino/**",
+                      "fs",
+                      "fs/**",
+                      "node:fs",
+                      "node:fs/**",
+                      "child_process",
+                      "node:child_process",
+                      "process",
+                      "node:process",
+                      "os",
+                      "node:os",
+                      "net",
+                      "node:net",
+                      "http",
+                      "node:http",
+                      "https",
+                      "node:https"
+                    ],
+                    "message": "Core layers import no provider SDK, MCP, logging library, or I/O module: declare a port in src/ports and implement it in src/adapters."
+                  },
+                  {
+                    "group": [
+                      "**/adapters/**",
+                      "**/config/**",
+                      "**/bootstrap/**",
+                      "**/entrypoints/**"
+                    ],
+                    "message": "Dependencies point inward: core layers never import adapters, config, bootstrap, or entrypoints. Receive what you need through a port."
+                  }
+                ]
+              }
+            },
+            "noRestrictedGlobals": {
+              "level": "error",
+              "options": {
+                "deniedGlobals": {
+                  "fetch": "No network calls in core layers: use a port implemented in src/adapters.",
+                  "process": "No process globals in core layers: config arrives through the composition root."
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "includes": ["src/domain/**"],
+      "linter": {
+        "rules": {
+          "style": {
+            "noRestrictedImports": {
+              "level": "error",
+              "options": {
+                "patterns": [
+                  {
+                    "group": [
+                      "openai",
+                      "openai/**",
+                      "@modelcontextprotocol/**",
+                      "pino",
+                      "pino/**",
+                      "fs",
+                      "fs/**",
+                      "node:*",
+                      "child_process",
+                      "process",
+                      "os",
+                      "net",
+                      "http",
+                      "https"
+                    ],
+                    "message": "The domain imports no provider SDK, MCP, logging library, or Node module."
+                  },
+                  {
+                    "group": [
+                      "**/ports/**",
+                      "**/app/**",
+                      "**/tools/**",
+                      "**/adapters/**",
+                      "**/config/**",
+                      "**/bootstrap/**",
+                      "**/entrypoints/**"
+                    ],
+                    "message": "The domain depends on nothing else in src/."
+                  }
+                ]
+              }
+            },
+            "noRestrictedGlobals": {
+              "level": "error",
+              "options": {
+                "deniedGlobals": {
+                  "fetch": "No network calls in the domain.",
+                  "process": "No process globals in the domain."
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "includes": ["src/entrypoints/**"],
+      "linter": {
+        "rules": {
+          "style": {
+            "noRestrictedImports": {
+              "level": "error",
+              "options": {
+                "patterns": [
+                  {
+                    "group": ["**/adapters/**", "**/tools/**"],
+                    "message": "Entrypoints wire through src/bootstrap; they never construct adapters or tools."
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    }
+  ],
+  "assist": {
+    "actions": {
+      "source": {
+        "organizeImports": "on"
+      }
+    }
+  }
+}

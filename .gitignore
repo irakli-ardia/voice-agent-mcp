@@ -1,0 +1,60 @@
+# dependencies, build output, caches
+node_modules/
+dist/
+coverage/
+.fallow/
+.cache/
+.eslintcache
+*.tsbuildinfo
+
+# secrets — .env.example is the committed contract
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+.npmrc
+
+# application runtime data (notes, generated audio)
+.data/
+
+# logs
+logs/
+*.log
+
+# local AI coding-assistant tooling — kept on the developer's machine, never published
+.agents/
+.claude/
+AGENTS.md
+CLAUDE.md
+AGENTS.local.md
+CLAUDE.local.md
+skills-lock.json
+memory.md
+.mcp.json
+.mcp.local.json
+.cursor/
+.codex/
+.gemini/
+.windsurf/
+.continue/
+.aider*
+.headroom/
+.rtk/
+.project-setup/
+*.jsonl
+
+# local development notes (plans, progress, working context) — never published
+context/
+docs/archive/
+scripts/skills/
+scripts/checks/agent-stop.mjs
+scripts/checks/agent-docs-check.mjs
+
+# scratch and OS files
+temp/
+tmp/
+scratch/
+*.tmp
+.DS_Store
+Thumbs.db
