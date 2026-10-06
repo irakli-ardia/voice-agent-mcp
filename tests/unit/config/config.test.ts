@@ -1,7 +1,8 @@
+import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { loadConfig } from "../../../src/config/config.js";
 
-const DEFAULTS = { logLevel: "info", maxToolResultBytes: 16_384 };
+const DEFAULTS = { logLevel: "info", maxToolResultBytes: 16_384, dataDir: resolve(".data") };
 
 describe("loadConfig", () => {
   it("applies defaults when nothing is set", () => {
@@ -54,5 +55,23 @@ describe("loadConfig", () => {
     const result = loadConfig({ MAX_TOOL_RESULT_BYTES: "sk-secret-cap" });
     expect(result.ok).toBe(false);
     expect(JSON.stringify(result)).not.toContain("sk-secret-cap");
+  });
+
+  it("resolves DATA_DIR to an absolute path once, against the working directory", () => {
+    expect(loadConfig({ DATA_DIR: "some/notes-dir" })).toEqual({
+      ok: true,
+      config: { ...DEFAULTS, dataDir: resolve("some/notes-dir") },
+    });
+    expect(loadConfig({ DATA_DIR: resolve("/srv/voice-agent") })).toEqual({
+      ok: true,
+      config: { ...DEFAULTS, dataDir: resolve("/srv/voice-agent") },
+    });
+  });
+
+  it("rejects an empty DATA_DIR", () => {
+    expect(loadConfig({ DATA_DIR: "" })).toEqual({
+      ok: false,
+      issues: [expect.stringMatching(/^DATA_DIR: /)],
+    });
   });
 });

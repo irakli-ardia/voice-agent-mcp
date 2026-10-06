@@ -7,7 +7,11 @@ import type { ToolDefinition } from "../../src/tools/tool-definition.js";
  * Contract for every tool in the real registry, as the composition root builds it. Schemas are
  * checked through the JSON Schema that OpenAI (M3) and MCP (M5) will derive from them.
  */
-const { tools } = createApplication({ logLevel: "silent", maxToolResultBytes: 16_384 });
+const { tools } = createApplication({
+  logLevel: "silent",
+  maxToolResultBytes: 16_384,
+  dataDir: "contract-test-data-dir-never-written",
+});
 
 const schemaBranch = z.looseObject({
   type: z.string().optional(),
@@ -48,6 +52,29 @@ describe("tool registry contract", () => {
 
     expect(names.length).toBeGreaterThan(0);
     expect(new Set(names).size).toBe(names.length);
+  });
+
+  it("includes at least one write tool, so the write-tool contract below cannot pass vacuously", () => {
+    expect(tools.tools.some((tool) => tool.risk === "write")).toBe(true);
+  });
+
+  /**
+   * A write retried after `timed_out` or `cancelled` must not repeat its effect, so every write
+   * tool names its operation with a required, non-null, bounded key.
+   */
+  describe.each(tools.tools.filter((tool) => tool.risk === "write"))("write tool $name", (tool) => {
+    it("takes a required, non-null, bounded idempotencyKey string", () => {
+      const {
+        required,
+        properties: { idempotencyKey },
+      } = inputJsonSchema(tool);
+
+      expect(required).toContain("idempotencyKey");
+      expect(idempotencyKey).toEqual(
+        expect.objectContaining({ type: "string", maxLength: expect.any(Number) }),
+      );
+      expect(idempotencyKey?.anyOf).toBeUndefined();
+    });
   });
 
   describe.each(tools.tools)("$name", (tool) => {

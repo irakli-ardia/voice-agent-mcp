@@ -5,6 +5,7 @@ import { createToolRegistry } from "../../../../src/app/tools/tool-registry.js";
 import type { JsonObject } from "../../../../src/domain/json-value.js";
 import { err, ok, type Result } from "../../../../src/domain/result.js";
 import type { ToolExecutionError } from "../../../../src/domain/tool-execution-error.js";
+import type { LogFields, Logger } from "../../../../src/ports/logger.js";
 import {
   defineTool,
   type ToolCall,
@@ -663,7 +664,10 @@ describe("createToolExecutor: deadline", () => {
 
       expect(codeOf(result)).toBe("timed_out");
       expect(unhandled).toEqual([]);
-      expect(logger.entries).toHaveLength(1);
+      expect(logger.entries.map((entry) => entry.message)).toEqual([
+        "tool.failed",
+        "tool.settled_late",
+      ]);
     } finally {
       process.off("unhandledRejection", onUnhandled);
     }
@@ -812,5 +816,162 @@ describe("createToolExecutor: precedence when waiting ends", () => {
       error: { code: "cancelled", message: "The tool call was cancelled; its outcome is unknown." },
     });
     expect(JSON.stringify(logger.entries)).not.toContain("sk-reason-secret");
+  });
+});
+
+describe("createToolExecutor: late settlement", () => {
+  /** A handler that settles with `outcome` well after its deadline, ignoring its signal. */
+  function lateHandler(outcome: () => Promise<EchoResult>): EchoHandler {
+    return async () => {
+      await new Promise((resolve) => setTimeout(resolve, TIMEOUT_MS * 2));
+
+      return outcome();
+    };
+  }
+
+  it.each([
+    ["returns", async () => ok({ text: "sk-late-output" }), { lateOutcome: "returned" }],
+    [
+      "returns a declared failure",
+      async () => err("rejected"),
+      { lateOutcome: "failed", failureReason: "rejected" },
+    ],
+    [
+      "throws",
+      async () => {
+        throw new RangeError("sk-late-secret at C:\\data\\notes");
+      },
+      { lateOutcome: "threw", errorName: "RangeError" },
+    ],
+  ] satisfies [string, () => Promise<EchoResult>, LogFields][])(
+    "logs tool.settled_late when a timed-out handler later %s, without changing the result",
+    async (_label, outcome, lateFields) => {
+      const { execute, logger, clock } = harness([echoTool(lateHandler(outcome))]);
+
+      const pending = execute(VALID, idle());
+      await vi.advanceTimersByTimeAsync(TIMEOUT_MS);
+      const result = await pending;
+      const reported = JSON.stringify(result);
+
+      clock.advance(250);
+      await vi.advanceTimersByTimeAsync(TIMEOUT_MS);
+      await realMacrotask();
+
+      expect(codeOf(result)).toBe("timed_out");
+      expect(JSON.stringify(result)).toBe(reported);
+      expect(logger.entries).toEqual([
+        expect.objectContaining({ message: "tool.failed" }),
+        {
+          level: "warn",
+          message: "tool.settled_late",
+          fields: {
+            toolCallId: "call-1",
+            toolName: "echo",
+            risk: "read",
+            durationMs: 250,
+            ...lateFields,
+          },
+        },
+      ]);
+      expect(JSON.stringify(logger.entries)).not.toMatch(/sk-late|data/);
+    },
+  );
+
+  it("logs tool.settled_late when a cancelled handler later returns", async () => {
+    const caller = new AbortController();
+    const { execute, logger } = harness([echoTool(lateHandler(async () => ok({ text: "x" })))]);
+
+    const pending = execute(VALID, caller.signal);
+    caller.abort();
+
+    expect(codeOf(await pending)).toBe("cancelled");
+
+    await vi.advanceTimersByTimeAsync(TIMEOUT_MS * 2);
+
+    expect(logger.entries.map((entry) => entry.message)).toEqual([
+      "tool.failed",
+      "tool.settled_late",
+    ]);
+  });
+
+  it("logs nothing more when the handler never settles", async () => {
+    const { execute, logger } = harness([echoTool(hangingHandler([]))]);
+
+    const pending = execute(VALID, idle());
+    await vi.advanceTimersByTimeAsync(TIMEOUT_MS * 10);
+    await pending;
+    await realMacrotask();
+
+    expect(logger.entries.map((entry) => entry.message)).toEqual(["tool.failed"]);
+  });
+
+  it("logs nothing more when the handler finishes in time or was never invoked", async () => {
+    const { execute, logger } = harness([echoTool(echoBack)]);
+
+    await execute(VALID, idle());
+    await execute(VALID, AbortSignal.abort());
+    await realMacrotask();
+
+    expect(logger.entries.map((entry) => entry.message)).toEqual(["tool.completed", "tool.failed"]);
+  });
+
+  it("never turns a failing logger into an unhandled rejection", async () => {
+    const unhandled: string[] = [];
+
+    const onUnhandled = (): void => {
+      unhandled.push("unhandled rejection");
+    };
+
+    process.on("unhandledRejection", onUnhandled);
+
+    try {
+      const recording = createRecordingLogger();
+
+      const logger: Logger = {
+        ...recording,
+        warn: (message, fields) => {
+          if (message === "tool.settled_late") {
+            throw new Error("log sink failed");
+          }
+
+          recording.warn(message, fields);
+        },
+      };
+
+      const execute = createToolExecutor({
+        registry: createToolRegistry([echoTool(lateHandler(async () => ok({ text: "x" })))]),
+        clock: createFakeClock(),
+        logger,
+        maxResultBytes: 1_000,
+      });
+
+      const pending = execute(VALID, idle());
+      await vi.advanceTimersByTimeAsync(TIMEOUT_MS * 2);
+      await pending;
+      await realMacrotask();
+
+      expect(unhandled).toEqual([]);
+      expect(recording.entries.map((entry) => entry.message)).toEqual(["tool.failed"]);
+    } finally {
+      process.off("unhandledRejection", onUnhandled);
+    }
+  });
+});
+
+describe("createToolExecutor: toolCallId in logs", () => {
+  it.each([
+    ["call_abc-1.2:3", "call_abc-1.2:3"],
+    ["x".repeat(128), "x".repeat(128)],
+    ["x".repeat(129), null],
+    ["", null],
+    ["id with spaces", null],
+    ["line\nbreak", null],
+    ['{"injected":"field"}', null],
+    ["call-ü", null],
+  ])("logs the call id %j as %j and still runs the call", async (id, logged) => {
+    const { execute, logger } = harness([echoTool(echoBack)]);
+
+    expect(codeOf(await execute({ ...VALID, id }, idle()))).toBe("ok");
+    expect(logger.entries[0]?.fields).toEqual(expect.objectContaining({ toolCallId: logged }));
   });
 });

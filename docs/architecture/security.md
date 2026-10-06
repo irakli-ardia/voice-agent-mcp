@@ -27,18 +27,49 @@ with `confirmation_required`.
 
 ## Idempotency
 
-`create_note` accepts an optional caller-provided idempotency key, or the host derives a scoped
-operation key, so provider/network retries do not duplicate the effect. A `timed_out` or
-`cancelled` result does not mean the handler stopped: its outcome is unknown, so a retry after
-either must be safe to repeat ([tool system](tool-system.md#timeouts-and-cancellation)).
-Scope and expiry are defined in M2 (open question) and tested with duplicate calls. Never claim exactly-once; document
-the at-least-once reality.
+A `timed_out` or `cancelled` result does not mean the handler stopped: its outcome is unknown, so a
+retry after either must be safe to repeat ([tool system](tool-system.md#timeouts-and-cancellation)).
+Every write tool therefore takes a required idempotency key, and a repeated key never repeats the
+effect ([write tools](tool-system.md#write-tools-and-idempotency),
+[decision 0008](../decisions/0008-idempotent-note-creation.md)). The model is not trusted to keep
+a key across a retry: in the agent loop the host derives the key, and the model never sees it (M3).
+An MCP client owns its key; if a client's model retries with a new key, a second note is created.
+The guarantee is at most one note per key — never exactly-once delivery.
 
-## Filesystem safety (file-backed notes)
+## Filesystem safety
 
-Application-owned root directory (`DATA_DIR`); generated ids, never model-chosen filenames; no
-absolute paths from users or the model; resolved-path containment check; restrictive permissions
-where practical; atomic writes; persisted data validated on read; corruption handled explicitly.
+Notes live only under the application-owned `DATA_DIR` (`<DATA_DIR>/notes/`), resolved to an
+absolute path once at startup.
+
+- **Names:** a note's file name is its id, the hex of a hash of the key, never text from a user or
+  the model. `read_note` accepts only ids matching `^[0-9a-f]{32}$`, checked by the tool schema and
+  again by the store before any path is built, so no input can name a path outside the directory.
+- **Commit point:** a note is written to a temp file in the same directory, fsynced, then published
+  with a hard `link` to its final name. The successful link is the only commit point; a failed link
+  creates nothing, and `EEXIST` means another call already committed the key.
+- **What is guaranteed** on a local filesystem with hard links (NTFS, ext4, tmpfs, APFS):
+  - atomic publication — no reader ever sees a partial note;
+  - concurrency — at most one note per key across concurrent calls and processes on one
+    `DATA_DIR`, with no lock;
+  - persistence across a process exit or crash once the link succeeded.
+- **What is not guaranteed:** surviving an OS crash or power loss. The directory is never fsynced
+  (Windows has no directory fsync), so an acknowledged note may vanish; a retry with the same key
+  re-creates it, still at most one note.
+- **Unsupported:** network filesystems, and filesystems without hard links (FAT32, exFAT), where
+  every create fails safe with `storage_unavailable`.
+- **Reads are untrusted:** a record over 64 KiB is refused unread; bytes must be UTF-8 JSON matching
+  a strict schema whose id matches the file name and whose key matches the request (or hashes to
+  the id). Anything else is reported `note_unreadable`, never returned, and left in place.
+- **Permissions:** the directory is created `0o700` and note files `0o600` (POSIX; Windows uses
+  the parent's ACLs).
+- **Errors:** a filesystem error never leaves the store. It is logged as a phase and a system error
+  code (`ENOENT`), never a message, because messages contain absolute paths; the caller gets a
+  static message.
+
+Residual risk: there is no note-count or disk quota yet (M6). Each record is under 13 KB, but the
+number of notes is unbounded across turns and over MCP. A full disk makes every create fail with
+`storage_unavailable`, while reads keep working, and affects anything else under `DATA_DIR`.
+Crashed writes can leave `.tmp-*` files behind; they are never read as notes.
 
 ## Denial and cost controls
 

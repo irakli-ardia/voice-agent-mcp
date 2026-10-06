@@ -22,9 +22,9 @@ The ubiquitous language is [the glossary](glossary.md); names in code use its te
 
 ## Domain
 
-- `src/domain/` holds the result type, JSON value types, and the tool-execution error taxonomy
-  (stable `code`, safe public message). A general application error with retryability arrives
-  with provider errors (M3). It imports nothing from other layers and no I/O module.
+- `src/domain/` holds the result type, JSON value types, the note type with its id, text, and key
+  formats, and the tool-execution error taxonomy (stable `code`, safe public message). A general
+  application error with retryability arrives with provider errors (M3). It imports nothing from other layers and no I/O module.
 - Pure functions, no clock reads (take `now` as an argument), no logging.
 
 ## Ports
@@ -57,7 +57,9 @@ The ubiquitous language is [the glossary](glossary.md); names in code use its te
 ## Composition root
 
 `src/bootstrap/create-application.ts` builds config-driven adapters and every service once per
-process and hands them to the entrypoints. Entrypoints never construct an adapter or a tool.
+process and hands them to the entrypoints. A tool that needs a port is built here by its factory,
+which receives only that port (`defineCreateNoteTool(notes)`). Building the application performs
+no I/O. Entrypoints never construct an adapter or a tool.
 Tests build services with fakes the same way. Shutdown ownership (`src/bootstrap/shutdown.ts`,
 planned M3/M6) lives beside it.
 

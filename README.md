@@ -7,9 +7,9 @@ model perform real actions without giving up type safety, validation, observabil
 Speech is transcribed, an OpenAI Responses API agent selects typed tools, every call runs through
 one validated executor, and the answer is spoken back. The same tool definitions are served to
 Claude and other MCP clients over stdio. It is a production-grade reference implementation with
-documented limits, built milestone by milestone; the current state is M1: the canonical tool
-system (tool definition, registry, executor, and two read-only tools) on the M0 foundation. No
-command runs tools yet; the agent arrives in M3 and the MCP server in M5. Generated speech is
+documented limits, built milestone by milestone; the current state is M2: the canonical tool
+system (tool definition, registry, executor) with two read-only tools and idempotent note tools
+(`create_note`, `read_note`) on a file-backed store. No command runs tools yet; the agent arrives in M3 and the MCP server in M5. Generated speech is
 AI-generated.
 
 License: [MIT](LICENSE). Security: [SECURITY.md](SECURITY.md). Contributing:

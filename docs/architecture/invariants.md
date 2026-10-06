@@ -1,6 +1,6 @@
 # Invariants
 
-The project's 28 repository invariants, numbered, with where each is enforced.
+The project's 29 repository invariants, numbered, with where each is enforced.
 This file is the complete list.
 "Planned" names the milestone that adds the enforcement.
 
@@ -24,6 +24,7 @@ This file is the complete list.
 | 9 | Every tool has risk metadata | `ToolSpec` type (destructive requires confirmation), `tests/contract/tool-registry.test.ts` |
 | 10 | Every tool execution passes through policy + timeout + logging | Single executor, `tests/architecture/tool-execution-path.test.ts`; adapters tested to call it (planned, M3/M5) |
 | 11 | Destructive tools cannot self-confirm through the LLM | Executor policy fails closed until the host confirmation channel exists (M6); executor tests |
+| 29 | Every write tool takes a required idempotency key; a repeated key never repeats the effect | `tests/contract/tool-registry.test.ts` (required, bounded key on every `write` tool); tool, store, and integration tests ([decision 0008](../decisions/0008-idempotent-note-creation.md)) |
 
 ## Architecture invariants
 
@@ -32,7 +33,7 @@ This file is the complete list.
 | 12 | Application/domain cannot import provider SDKs | `tests/architecture/dependency-direction.test.ts`, fallow zones, Biome overrides |
 | 13 | Entrypoints contain composition and I/O wiring, not business logic | Architecture test (no adapter/tool imports), Biome override; review |
 | 14 | Only the config module reads environment variables | Biome `noProcessEnv` (off only in `src/config`), architecture test |
-| 15 | Only persistence adapters touch storage implementation details | Architecture test bans `fs` in core layers; review (planned tests, M2) |
+| 15 | Only persistence adapters touch storage implementation details | `tests/architecture/dependency-direction.test.ts` (filesystem modules only under `src/adapters/persistence/`); review |
 | 16 | Provider errors are translated before crossing adapter boundaries | Adapter error-mapping tests (planned, M3–M4) |
 
 ## Operational invariants

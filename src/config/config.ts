@@ -1,3 +1,4 @@
+import { resolve } from "node:path";
 import { z } from "zod";
 
 const logLevelSchema = z.enum(["fatal", "error", "warn", "info", "debug", "trace", "silent"]);
@@ -8,10 +9,13 @@ const configSchema = z
   .object({
     LOG_LEVEL: logLevelSchema.default("info"),
     MAX_TOOL_RESULT_BYTES: z.coerce.number().int().min(1).max(1_048_576).default(16_384),
+    DATA_DIR: z.string().min(1).default(".data"),
   })
   .transform((env) => ({
     logLevel: env.LOG_LEVEL,
     maxToolResultBytes: env.MAX_TOOL_RESULT_BYTES,
+    /** Absolute, resolved once against the working directory at startup. */
+    dataDir: resolve(env.DATA_DIR),
   }));
 
 export type Config = Readonly<z.output<typeof configSchema>>;

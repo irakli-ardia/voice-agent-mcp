@@ -2,8 +2,8 @@
 
 The architectural centerpiece: a tool is defined once and every caller — the OpenAI agent loop and
 the MCP server — derives from that definition and executes through one executor. Status: the
-definition, registry, executor, and two read-only tools are built (M1); side-effect tools follow in
-M2.
+definition, registry, executor, and two read-only tools are built (M1); `create_note` and
+`read_note` on a file-backed note store are built (M2).
 
 ## Tool definition
 
@@ -30,9 +30,10 @@ parsed input. The registry therefore holds tools with different input and output
 `any` or casts. Callers receive a validated JSON object, not a per-tool type: every caller
 dispatches by name, so none could use one.
 
-The handler's context holds only explicitly permitted dependencies — today the `AbortSignal` and
-the `Clock`. Later milestones add what their tools need. Never the OpenAI client, never MCP or
-OpenAI types.
+The handler's context holds only what every tool may use — the `AbortSignal` and the `Clock`.
+A tool that needs a port is built by a factory that receives exactly that port
+(`defineCreateNoteTool(notes)`), and the composition root wires it, so no tool can reach another
+tool's dependencies. Never the OpenAI client, never MCP or OpenAI types.
 
 ### Expected failures stay client-safe
 
@@ -63,7 +64,7 @@ to the error log.
 
 ```
 lookup exact registered tool → validate input → policy → caller already cancelled?
-  → deadline + execute → validate output → result size cap → one log event → Result
+  → deadline + execute → validate output → result size cap → one outcome log event → Result
 ```
 
 Only the executor calls `bindArguments`, so no code reaches a handler any other way
@@ -100,7 +101,10 @@ in the issue path, so tool inputs use fixed property names, not records.
 deadline the executor aborts the handler's `context.signal`, but JavaScript cannot terminate a
 promise: a handler that ignores its signal keeps running and may complete a side effect after the
 caller has received `timed_out`. `cancelled` has the same semantics. This is harmless for
-read-only tools and is why write tools need idempotency (M2).
+read-only tools and is why every write tool takes a required idempotency key
+([write tools](#write-tools-and-idempotency)). When such a handler settles after all, the executor
+logs `tool.settled_late`; the caller's result never changes
+([observability](observability.md#tool-events)).
 
 The deadline is `timeoutMs` from the definition. A caller's limit — a turn deadline, a client
 disconnect — arrives as the caller's `AbortSignal`; there is no separate configured tool-timeout
@@ -124,21 +128,53 @@ executor. It does not bound memory or CPU a handler uses, or the size of an obje
 before it is validated and measured. Argument size is bounded by the transport (M3, M5) and by
 schema limits such as `maxLength`.
 
+## Write tools and idempotency
+
+A write retried after an unknown outcome must not repeat its effect
+([decision 0008](../decisions/0008-idempotent-note-creation.md)):
+
+- Every `write` tool takes a required, non-null, bounded `idempotencyKey`
+  (`tests/contract/tool-registry.test.ts`). There is no keyless write path.
+- The key belongs to the caller of the executor. In the agent loop that is the host, which derives
+  it from the turn, the tool, and the arguments, so the model never sees or supplies it (M3). An
+  MCP client supplies its own (M5).
+- `create_note`: one key names one note. The same key and the same text replay the original note
+  with `created: false`; the same key and different text fail with `idempotency_key_conflict`;
+  different keys create different notes, even with the same text. Text is compared exactly.
+- The key's scope is the whole note store, across processes and restarts; it lives as long as its
+  note. Duplicate suppression is at most one note per key, never "exactly once": a caller that
+  retries with a new key creates a new note.
+
+What each `create_note` outcome means for the caller:
+
+| Outcome | Note for this key |
+| --- | --- |
+| `ok`, `created: true` | written by this call |
+| `ok`, `created: false` | written earlier by a call with the same key; this call wrote nothing |
+| `execution_failed` (`idempotency_key_conflict`, `note_unreadable`, `storage_unavailable`) | this call wrote nothing; retrying the same request is safe |
+| `invalid_input`, `unknown_tool` | nothing written |
+| `invalid_output` | written; the result was withheld, and a retry with the same key replays it |
+| `timed_out`, `cancelled`, `internal_error` | unknown; retry with the same key |
+
+The store's commit point and its guarantees are in [security](security.md#filesystem-safety).
+
 ## Initial tools
 
 | Tool | Risk | Proves | Milestone |
 | --- | --- | --- | --- |
 | `get_current_time` | read | `Clock` port, schema validation, OpenAI/MCP reuse | M1 |
 | `calculate` | read | Operation enum + numeric inputs, no `eval`, declared failures | M1 |
-| `create_note` | write | Side effects, generated ids, persistence port, idempotency | M2 |
-| `read_note` | read | Not-found semantics, output schema, safe persistence access | M2 |
+| `create_note` | write | Side effects, required idempotency key, persistence port, atomic publication | M2 |
+| `read_note` | read | Not-found semantics, validated reads of persisted data | M2 |
 | `delete_note` | destructive | Confirmation policy and audit event — only after the policy exists | M6 (optional) |
 
 ## Adding a tool
 
-1. Create `src/tools/<tool-name>/<tool-name>-tool.ts`.
+1. Create `src/tools/<tool-name>/<tool-name>-tool.ts`. A tool that needs a port exports a factory
+   (`define<Name>Tool(port)`) instead of a constant.
 2. Define strict input and output Zod schemas; describe every input property.
 3. Define metadata (name, description, risk, timeout, confirmation) and the expected `failures`.
+   A `write` tool takes a required `idempotencyKey` and must make a repeated key a no-op.
 4. Implement `execute` against the tool context; return `ok(output)` or `err(reason)`.
 5. Add the definition to the registry in `src/bootstrap/create-application.ts`.
 6. Add unit tests through the executor (valid, invalid input, each failure reason; idempotency if

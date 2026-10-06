@@ -12,6 +12,7 @@ is never edited to change its outcome; a later record supersedes it and both lin
 | [0005](0005-ports-and-adapters-for-providers.md) | Ports and adapters for AI and audio providers | accepted |
 | [0006](0006-confirmation-outside-the-model.md) | Confirmation policy outside the model | accepted |
 | [0007](0007-no-orchestration-framework.md) | No orchestration framework for the agent loop | accepted |
+| [0008](0008-idempotent-note-creation.md) | Idempotent note creation: required key, key-derived id, hard-link publication | accepted |
 
 ## Template
 

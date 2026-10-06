@@ -11,8 +11,8 @@ orchestration library ([decision 0001](../decisions/0001-initial-stack.md)).
 
 ```
 src/
-  domain/        result, JSON value, and tool error types; imports nothing else
-  ports/         interfaces the app owns: model, STT, TTS, clock, ids, logger
+  domain/        result, JSON value, tool error, and note types; imports nothing else
+  ports/         interfaces the app owns: model, STT, TTS, clock, ids, logger, note store
   app/           agent runner, audio services, tool registry/executor/policy
   tools/         the definition contract, and one folder per canonical tool
   adapters/      openai, mcp, persistence, system, logging implementations
@@ -26,8 +26,8 @@ tests/           unit, architecture, contract, integration, fixtures, helpers
 
 Dependencies point inward: entrypoints → bootstrap → adapters → app → tools/ports → domain.
 
-- **Domain** (`src/domain`) — error taxonomy and result types. Imports nothing from other layers
-  and no provider, protocol, or I/O module.
+- **Domain** (`src/domain`) — error taxonomy, result types, and the note type and its id and key
+  formats. Imports nothing from other layers and no provider, protocol, or I/O module.
 - **Ports** (`src/ports`) — interfaces named for their role. Types only; no provider types.
 - **App** (`src/app`) — agent runner, audio services, registry, executor, policy. Depends on ports,
   tools, and domain; never on OpenAI, MCP, pino, `fs`, `process`, config, or adapters.
@@ -76,7 +76,10 @@ reason; there are none.
   code 78 and names the variable, never its value. `.env.example` lists every variable; variables
   arrive with the milestone that uses them.
 - Runtime data (notes, generated audio) lives under the application-owned `DATA_DIR`
-  (`.data/` by default, git-ignored).
+  (`.data/` by default, git-ignored), resolved to an absolute path against the working directory
+  at startup. It must be on a local filesystem with hard links
+  ([filesystem safety](security.md#filesystem-safety)); a host that spawns the process from an
+  unknown working directory (an MCP host, M5) should set it to an absolute path.
 
 ## Scope
 
@@ -95,7 +98,7 @@ validation schema for OpenAI, and placeholder adapters for providers that are no
 | [MCP](mcp.md) | The MCP server, its registration, stdio handling |
 | [Security](security.md) | Risk policy, confirmation, limits, filesystem access, secrets, retries |
 | [Observability](observability.md) | Log events, correlation fields, timings |
-| [Invariants](invariants.md) | Anything — the 28 repository invariants and where each is enforced |
+| [Invariants](invariants.md) | Anything — the 29 repository invariants and where each is enforced |
 | [Glossary](glossary.md) | Naming — the terms code and docs use exactly |
 
 Why the big choices were made: [decisions](../decisions/README.md).

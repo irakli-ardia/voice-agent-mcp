@@ -1,8 +1,24 @@
-import { describe, expect, it } from "vitest";
+import { existsSync } from "node:fs";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createApplication } from "../../../src/bootstrap/create-application.js";
 import type { Config } from "../../../src/config/config.js";
 
-const CONFIG: Config = { logLevel: "silent", maxToolResultBytes: 16_384 };
+let CONFIG: Config;
+
+beforeEach(async () => {
+  CONFIG = {
+    logLevel: "silent",
+    maxToolResultBytes: 16_384,
+    dataDir: await mkdtemp(join(tmpdir(), "create-application-")),
+  };
+});
+
+afterEach(async () => {
+  await rm(CONFIG.dataDir, { recursive: true, force: true });
+});
 
 describe("createApplication", () => {
   it("wires a logger for the given config", () => {
@@ -15,7 +31,38 @@ describe("createApplication", () => {
     expect(createApplication(CONFIG).tools.tools.map((tool) => tool.name)).toEqual([
       "get_current_time",
       "calculate",
+      "create_note",
+      "read_note",
     ]);
+  });
+
+  it("touches no disk until a note is written", () => {
+    const dataDir = join(CONFIG.dataDir, "not-yet");
+
+    createApplication({ ...CONFIG, dataDir });
+
+    expect(existsSync(dataDir)).toBe(false);
+  });
+
+  it("saves notes under DATA_DIR/notes and reads them back through the executor", async () => {
+    const { executeTool } = createApplication(CONFIG);
+    const signal = new AbortController().signal;
+
+    const created = await executeTool(
+      {
+        id: "call-1",
+        name: "create_note",
+        arguments: { text: "Water the plants", idempotencyKey: "bootstrap-key-0123" },
+      },
+      signal,
+    );
+
+    const { noteId } = created.ok ? created.value : {};
+
+    expect(existsSync(join(CONFIG.dataDir, "notes", `${String(noteId)}.json`))).toBe(true);
+    expect(
+      await executeTool({ id: "call-2", name: "read_note", arguments: { noteId } }, signal),
+    ).toEqual({ ok: true, value: expect.objectContaining({ text: "Water the plants" }) });
   });
 
   it("runs a registered tool through the executor with the system clock", async () => {

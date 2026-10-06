@@ -85,6 +85,19 @@ describe("dependency direction", () => {
     expect(violations).toEqual([]);
   });
 
+  it("lets only the persistence adapters import filesystem modules", () => {
+    const fileSystem = /^(node:)?fs(\/promises)?$/;
+
+    const importers = readTypeScriptFiles("src").flatMap((file) =>
+      importSpecifiers(file.text).some((specifier) => fileSystem.test(specifier))
+        ? [file.path]
+        : [],
+    );
+
+    expect(importers.filter((path) => !path.startsWith("src/adapters/persistence/"))).toEqual([]);
+    expect(importers).toContain("src/adapters/persistence/file-note-store.ts");
+  });
+
   it("reads process.env only in src/config", () => {
     const readers = readTypeScriptFiles("src")
       .filter((file) => /\bprocess\s*\.\s*env\b|\bprocess\s*\[\s*["']env["']\s*\]/.test(file.text))

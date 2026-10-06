@@ -49,17 +49,30 @@ const MAX_REPORTED_ISSUES = 10;
 
 const MAX_LOGGED_ERROR_MESSAGE = 500;
 
+/** Host-supplied call ids are logged only in this form; anything else is logged as `null`. */
+const TOOL_CALL_ID_PATTERN = /^[A-Za-z0-9_.:-]{1,128}$/;
+
+/** What a thrown value may contribute to a log event: never the value itself. */
+type CauseDetails = { readonly errorName: string; readonly errorMessage?: string };
+
+/** How an invoked handler finished. Never rejects: a thrown value is mapped to `threw`. */
+type HandlerSettlement =
+  | { readonly status: "returned"; readonly value: Result<JsonObject, ToolFailure> }
+  | { readonly status: "threw"; readonly details: CauseDetails };
+
+/** When the executor stops waiting, `late` still tracks the handler, which may finish afterwards. */
+type Settlement =
+  | { readonly status: "cancelled" | "timed_out"; readonly late: Promise<HandlerSettlement> }
+  | HandlerSettlement;
+
 /** One call's result plus what the log event needs; `details` never holds arguments or output. */
 interface Outcome {
   readonly result: Result<JsonObject, ToolExecutionError>;
   readonly handlerInvoked: boolean;
   readonly details: LogFields;
+  /** Set when the result is `cancelled` or `timed_out` after the handler was invoked. */
+  readonly late?: Promise<HandlerSettlement>;
 }
-
-type Settlement =
-  | { readonly status: "cancelled" | "timed_out" }
-  | { readonly status: "returned"; readonly value: Result<JsonObject, ToolFailure> }
-  | { readonly status: "threw"; readonly details: LogFields };
 
 function failed(
   code: keyof typeof MESSAGES,
@@ -91,7 +104,7 @@ function describeInputIssues(issues: readonly z.core.$ZodIssue[]): string {
  * The thrown value stays private: only its name and message reach the error log. Total, because
  * it runs inside the executor's last catch: a thrown value with odd properties must not escape.
  */
-function describeCause(cause: unknown): LogFields {
+function describeCause(cause: unknown): CauseDetails {
   try {
     return cause instanceof Error
       ? {
@@ -133,19 +146,19 @@ async function settle(
     // A rejection becomes a settlement too, so the precedence below also covers a handler that
     // rejects; the race's subscription keeps a rejection after we stop waiting from going unhandled.
     const handled = handler({ signal, clock }).then(
-      (value): Settlement => ({ status: "returned", value }),
-      (cause: unknown): Settlement => ({ status: "threw", details: describeCause(cause) }),
+      (value): HandlerSettlement => ({ status: "returned", value }),
+      (cause: unknown): HandlerSettlement => ({ status: "threw", details: describeCause(cause) }),
     );
 
     const first = await Promise.race([handled, aborted.promise]);
 
     if (callerSignal.aborted) {
-      return { status: "cancelled" };
+      return { status: "cancelled", late: handled };
     }
 
     // "aborted" without the caller's flag can only mean the deadline; the check narrows `first`.
     if (deadline.signal.aborted || first === "aborted") {
-      return { status: "timed_out" };
+      return { status: "timed_out", late: handled };
     }
 
     return first;
@@ -222,7 +235,7 @@ async function run(
     switch (settlement.status) {
       case "cancelled":
       case "timed_out":
-        return failed(settlement.status, handlerInvoked);
+        return { ...failed(settlement.status, handlerInvoked), late: settlement.late };
       case "threw":
         return failed("internal_error", handlerInvoked, settlement.details);
       case "returned":
@@ -244,6 +257,10 @@ function loggableToolName(name: string): string | null {
   return TOOL_NAME_PATTERN.test(name) ? name : null;
 }
 
+function loggableToolCallId(id: string): string | null {
+  return TOOL_CALL_ID_PATTERN.test(id) ? id : null;
+}
+
 function log(
   logger: Logger,
   call: ToolCall,
@@ -254,7 +271,7 @@ function log(
   const { result } = outcome;
 
   const fields: LogFields = {
-    toolCallId: call.id,
+    toolCallId: loggableToolCallId(call.id),
     toolName: loggableToolName(call.name),
     risk: tool?.risk ?? null,
     outcome: result.ok ? "ok" : result.error.code,
@@ -272,9 +289,48 @@ function log(
   logger[DEFECT_CODES.has(result.error.code) ? "error" : "warn"]("tool.failed", fields);
 }
 
+/** Only the declared failure reason or the thrown value's name: never output or thrown data. */
+function lateOutcomeFields(settlement: HandlerSettlement): LogFields {
+  if (settlement.status === "threw") {
+    return { lateOutcome: "threw", errorName: settlement.details.errorName };
+  }
+
+  return settlement.value.ok
+    ? { lateOutcome: "returned" }
+    : { lateOutcome: "failed", failureReason: settlement.value.error.reason };
+}
+
+/**
+ * After a `cancelled` or `timed_out` result, logs `tool.settled_late` if the handler finishes
+ * anyway — the evidence that a write the caller saw as "outcome unknown" did complete. The caller's
+ * result is already returned and never changes.
+ */
+function watchLateSettlement(
+  dependencies: ToolExecutorDependencies,
+  call: ToolCall,
+  tool: ToolDefinition,
+  late: Promise<HandlerSettlement>,
+  startedAt: number,
+): void {
+  void late.then((settlement) => {
+    try {
+      dependencies.logger.warn("tool.settled_late", {
+        toolCallId: loggableToolCallId(call.id),
+        toolName: tool.name,
+        risk: tool.risk,
+        durationMs: dependencies.clock.monotonicNow() - startedAt,
+        ...lateOutcomeFields(settlement),
+      });
+    } catch {
+      // A failing logger must not turn a late settlement into an unhandled rejection.
+    }
+  });
+}
+
 /**
  * The one pipeline every tool call passes: lookup → validate input → policy → cancellation check
- * → deadline + execute → validate output → size cap → one log event.
+ * → deadline + execute → validate output → size cap → one outcome log event, plus
+ * `tool.settled_late` if a handler finishes after the executor stopped waiting.
  */
 export function createToolExecutor(dependencies: ToolExecutorDependencies): ToolExecutor {
   return async (
@@ -290,6 +346,10 @@ export function createToolExecutor(dependencies: ToolExecutorDependencies): Tool
         : await run(tool, call, signal, dependencies);
 
     log(dependencies.logger, call, tool, outcome, dependencies.clock.monotonicNow() - startedAt);
+
+    if (tool !== undefined && outcome.late !== undefined) {
+      watchLateSettlement(dependencies, call, tool, outcome.late, startedAt);
+    }
 
     return outcome.result;
   };
