@@ -13,6 +13,7 @@ is never edited to change its outcome; a later record supersedes it and both lin
 | [0006](0006-confirmation-outside-the-model.md) | Confirmation policy outside the model | accepted |
 | [0007](0007-no-orchestration-framework.md) | No orchestration framework for the agent loop | accepted |
 | [0008](0008-idempotent-note-creation.md) | Idempotent note creation: required key, key-derived id, hard-link publication | accepted |
+| [0009](0009-stateless-agent-loop.md) | Stateless agent loop: application-owned transcript, opaque continuation | accepted |
 
 ## Template
 

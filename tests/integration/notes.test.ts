@@ -10,12 +10,12 @@ import {
 import { createToolExecutor, type ToolExecutor } from "../../src/app/tools/tool-executor.js";
 import { createToolRegistry } from "../../src/app/tools/tool-registry.js";
 import { createApplication } from "../../src/bootstrap/create-application.js";
-import type { Config } from "../../src/config/config.js";
 import type { LogFields, Logger } from "../../src/ports/logger.js";
 import { defineCreateNoteTool } from "../../src/tools/create-note/create-note-tool.js";
 import { defineReadNoteTool } from "../../src/tools/read-note/read-note-tool.js";
 import { createFakeClock } from "../helpers/fake-clock.js";
 import { createRecordingLogger, type RecordingLogger } from "../helpers/recording-logger.js";
+import { testConfig } from "../helpers/test-config.js";
 
 const KEY = "integration-key-0123";
 
@@ -173,7 +173,7 @@ describe("notes on the real file store: retry after timed_out", () => {
 
 describe("notes through the composition root", () => {
   it("replays a key and reads the note after the application is recreated", async () => {
-    const config: Config = { logLevel: "silent", maxToolResultBytes: 16_384, dataDir };
+    const config = testConfig({ dataDir });
     const first = await create(createApplication(config).executeTool, "call-1");
     const restarted = createApplication(config).executeTool;
     const replay = await create(restarted, "call-2");
@@ -188,11 +188,7 @@ describe("notes through the composition root", () => {
   });
 
   it("returns a conflict, not a second note, for the same key with different text", async () => {
-    const { executeTool } = createApplication({
-      logLevel: "silent",
-      maxToolResultBytes: 16_384,
-      dataDir,
-    });
+    const { executeTool } = createApplication(testConfig({ dataDir }));
 
     await create(executeTool, "call-1");
 
@@ -206,11 +202,7 @@ describe("notes through the composition root", () => {
   });
 
   it("lets one of 50 concurrent same-key calls with different text create, and the rest conflict", async () => {
-    const { executeTool } = createApplication({
-      logLevel: "silent",
-      maxToolResultBytes: 16_384,
-      dataDir,
-    });
+    const { executeTool } = createApplication(testConfig({ dataDir }));
 
     const texts = Array.from({ length: 50 }, (_, index) => `concurrent text ${index}`);
 

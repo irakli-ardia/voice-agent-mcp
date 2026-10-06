@@ -34,6 +34,7 @@ export function defineCreateNoteTool(notes: NoteStore): ToolDefinition {
       "save, note down, or remember something. Saved notes cannot be changed or deleted.",
     risk: "write",
     requiresConfirmation: false,
+    idempotency: "key",
     timeoutMs: 5_000,
     inputSchema: z.strictObject({
       text: z.string().min(1).max(NOTE_TEXT_MAX_LENGTH).describe("The text of the note."),

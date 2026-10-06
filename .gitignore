@@ -22,7 +22,7 @@ coverage/
 logs/
 *.log
 
-# local AI coding-assistant tooling — kept on the developer's machine, never published
+# Local development tooling
 .agents/
 .claude/
 AGENTS.md
@@ -44,7 +44,7 @@ memory.md
 .project-setup/
 *.jsonl
 
-# local development notes (plans, progress, working context) — never published
+# Local planning and workspace files
 context/
 docs/archive/
 scripts/skills/

@@ -26,6 +26,7 @@
     "typecheck": "tsc -p tsconfig.json",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
+    "test:openai": "npm run build && vitest run --config vitest.live.config.ts",
     "check:architecture": "vitest run tests/architecture",
     "check:forbidden-types": "vitest run tests/architecture/forbidden-type-escapes.test.ts",
     "fallow": "fallow --quiet",
@@ -34,6 +35,7 @@
     "check": "npm run docs:check && npm run lint && npm run typecheck && npm run fallow && npm run test:coverage && npm run build"
   },
   "dependencies": {
+    "openai": "7.28.0",
     "pino": "10.4.0",
     "zod": "4.6.5"
   },

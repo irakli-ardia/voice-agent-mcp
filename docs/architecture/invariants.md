@@ -1,6 +1,6 @@
 # Invariants
 
-The project's 29 repository invariants, numbered, with where each is enforced.
+The project's 33 repository invariants, numbered, with where each is enforced.
 This file is the complete list.
 "Planned" names the milestone that adds the enforcement.
 
@@ -18,13 +18,15 @@ This file is the complete list.
 
 | # | Rule | Enforced by |
 | --- | --- | --- |
-| 6 | Every model-callable action exists in the canonical registry | `tests/contract/tool-registry.test.ts`; adapter contract tests (planned, M3/M5) |
+| 6 | Every model-callable action exists in the canonical registry | `tests/contract/tool-registry.test.ts` (including the model-facing projection); MCP contract tests (planned, M5) |
 | 7 | OpenAI and MCP never implement separate tool handlers | Contract test: both adapters derive from the same registry (planned, M5) |
 | 8 | Every tool has input and output validation | `defineTool` types, executor validation, `tests/contract/tool-registry.test.ts` |
 | 9 | Every tool has risk metadata | `ToolSpec` type (destructive requires confirmation), `tests/contract/tool-registry.test.ts` |
-| 10 | Every tool execution passes through policy + timeout + logging | Single executor, `tests/architecture/tool-execution-path.test.ts`; adapters tested to call it (planned, M3/M5) |
+| 10 | Every tool execution passes through policy + timeout + logging | Single executor, `tests/architecture/tool-execution-path.test.ts`; agent runner tests (calls reach the real executor); MCP (planned, M5) |
 | 11 | Destructive tools cannot self-confirm through the LLM | Executor policy fails closed until the host confirmation channel exists (M6); executor tests |
 | 29 | Every write tool takes a required idempotency key; a repeated key never repeats the effect | `tests/contract/tool-registry.test.ts` (required, bounded key on every `write` tool); tool, store, and integration tests ([decision 0008](../decisions/0008-idempotent-note-creation.md)) |
+| 30 | Host-owned fields never reach the model: a `key` tool's `idempotencyKey` is absent from its model-facing schema and is always derived by the host in the agent loop | `idempotency` metadata (`defineTool` type, registry startup check), `tests/contract/tool-registry.test.ts`, `tests/unit/app/agent/` (projection, derivation, runner) |
+| 31 | No tool call runs from a model step that was not accepted: invalid or reused call ids, an exhausted iteration or tool-call budget, an incomplete, refused, or unsupported response | `tests/unit/app/agent/agent-runner.test.ts`, `tests/unit/adapters/openai/responses-agent-model.test.ts` |
 
 ## Architecture invariants
 
@@ -34,15 +36,17 @@ This file is the complete list.
 | 13 | Entrypoints contain composition and I/O wiring, not business logic | Architecture test (no adapter/tool imports), Biome override; review |
 | 14 | Only the config module reads environment variables | Biome `noProcessEnv` (off only in `src/config`), architecture test |
 | 15 | Only persistence adapters touch storage implementation details | `tests/architecture/dependency-direction.test.ts` (filesystem modules only under `src/adapters/persistence/`); review |
-| 16 | Provider errors are translated before crossing adapter boundaries | Adapter error-mapping tests (planned, M3–M4) |
+| 16 | Provider errors are translated before crossing adapter boundaries | OpenAI adapter error-mapping tests (status and code only, never message text); audio adapters (planned, M4) |
+| 32 | The agent loop keeps no provider-side state: stateless requests (`store: false`), no `previous_response_id` or conversation, and the provider continuation is opaque to the app | Responses adapter request tests, `AgentModel` port types, [decision 0009](../decisions/0009-stateless-agent-loop.md) |
 
 ## Operational invariants
 
 | # | Rule | Enforced by |
 | --- | --- | --- |
-| 17 | Every external call has a timeout/cancellation strategy | Ports take `AbortSignal`; adapter tests (planned, M3–M4) |
-| 18 | Agent loop is bounded | Max-iteration test (planned, M3) |
+| 17 | Every external call has a timeout/cancellation strategy | Ports take `AbortSignal`; OpenAI per-attempt timeout and abortable retries (adapter tests); audio (planned, M4) |
+| 18 | Agent loop is bounded | Iteration, tool-call, and turn-deadline tests in `tests/unit/app/agent/agent-runner.test.ts` |
 | 19 | The serialised tool result leaving the executor is bounded (not handler memory) | `MAX_TOOL_RESULT_BYTES`, executor tests |
+| 33 | Every tool error message is at most 1024 bytes as serialised JSON, so a tool-result envelope has an exact maximum size | Executor `invalid_input` cap, registry startup check, executor, registry, and adapter envelope tests |
 | 20 | Logs are structured and secret-safe | pino adapter with redaction + `tests/unit/adapters/logging/pino-logger.test.ts` |
 | 21 | MCP stdio never logs to stdout | Logger defaults to stderr; MCP stdout-clean test (planned, M5) |
 | 22 | Shutdown is graceful | Shutdown tests (planned, M6) |

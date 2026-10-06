@@ -1,7 +1,12 @@
 import type { z } from "zod";
 import type { JsonObject } from "../../domain/json-value.js";
 import { err, ok, type Result } from "../../domain/result.js";
-import type { ToolErrorCode, ToolExecutionError } from "../../domain/tool-execution-error.js";
+import {
+  MAX_TOOL_ERROR_MESSAGE_JSON_BYTES,
+  type ToolErrorCode,
+  type ToolExecutionError,
+  toolErrorMessageJsonBytes,
+} from "../../domain/tool-execution-error.js";
 import type { Clock } from "../../ports/clock.js";
 import type { LogFields, Logger } from "../../ports/logger.js";
 import type {
@@ -10,6 +15,7 @@ import type {
   ToolDefinition,
   ToolFailure,
 } from "../../tools/tool-definition.js";
+import { TOOL_CALL_ID_PATTERN } from "./tool-call-id.js";
 import { TOOL_NAME_PATTERN, type ToolRegistry } from "./tool-registry.js";
 
 /**
@@ -47,10 +53,10 @@ const MESSAGES = {
 
 const MAX_REPORTED_ISSUES = 10;
 
-const MAX_LOGGED_ERROR_MESSAGE = 500;
+/** Used when not even one issue fits within `MAX_TOOL_ERROR_MESSAGE_JSON_BYTES`. */
+const UNDESCRIBED_INPUT_ISSUES = "Invalid arguments.";
 
-/** Host-supplied call ids are logged only in this form; anything else is logged as `null`. */
-const TOOL_CALL_ID_PATTERN = /^[A-Za-z0-9_.:-]{1,128}$/;
+const MAX_LOGGED_ERROR_MESSAGE = 500;
 
 /** What a thrown value may contribute to a log event: never the value itself. */
 type CauseDetails = { readonly errorName: string; readonly errorMessage?: string };
@@ -82,22 +88,44 @@ function failed(
   return { result: err({ code, message: MESSAGES[code] }), handlerInvoked, details };
 }
 
-/** Builds a safe message: paths and Zod's type-level messages only, never the rejected values. */
-function describeInputIssues(issues: readonly z.core.$ZodIssue[]): string {
-  const described = issues.slice(0, MAX_REPORTED_ISSUES).map((issue) => {
-    const where = issue.path.length === 0 ? "(root)" : issue.path.map(String).join(".");
-    // Zod's message for this code lists the unexpected key names, which come from the caller.
+function describeInputIssue(issue: z.core.$ZodIssue): string {
+  const where = issue.path.length === 0 ? "(root)" : issue.path.map(String).join(".");
 
-    const what =
-      issue.code === "unrecognized_keys" ? "unknown properties are not allowed" : issue.message;
+  // Zod's message for this code lists the unexpected key names, which come from the caller.
+  const what =
+    issue.code === "unrecognized_keys" ? "unknown properties are not allowed" : issue.message;
 
-    return `${where}: ${what}`;
-  });
+  return `${where}: ${what}`;
+}
 
-  const omitted = issues.length - described.length;
+function renderInputIssues(described: readonly string[], omitted: number): string {
   const suffix = omitted > 0 ? `; and ${omitted} more` : "";
 
   return `Invalid arguments: ${described.join("; ")}${suffix}.`;
+}
+
+/**
+ * Builds a safe message: paths and Zod's type-level messages only, never the rejected values. At
+ * most ten issues, and only as many as keep the serialised message within its byte bound; the
+ * rest are counted.
+ */
+function describeInputIssues(issues: readonly z.core.$ZodIssue[]): string {
+  let described: readonly string[] = [];
+  let message = UNDESCRIBED_INPUT_ISSUES;
+
+  for (const issue of issues.slice(0, MAX_REPORTED_ISSUES)) {
+    const candidate = [...described, describeInputIssue(issue)];
+    const rendered = renderInputIssues(candidate, issues.length - candidate.length);
+
+    if (toolErrorMessageJsonBytes(rendered) > MAX_TOOL_ERROR_MESSAGE_JSON_BYTES) {
+      break;
+    }
+
+    described = candidate;
+    message = rendered;
+  }
+
+  return message;
 }
 
 /**

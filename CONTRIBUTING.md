@@ -26,7 +26,7 @@ Enforced by the git hooks in `.githooks/` and by CI on every pull request.
 - Never bypass hooks with `--no-verify`. CI is authoritative.
 - Check a branch before pushing: `node scripts/git/conventions.mjs current`.
 - Before committing, review what will be tracked (`git status --porcelain`). Never commit secrets,
-  `.env` files, runtime data, caches, or local editor and assistant configuration.
+  `.env` files, runtime data, caches, or local editor and tool configuration.
 
 ## Checks
 

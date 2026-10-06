@@ -53,12 +53,16 @@ entrypoint (CLI or MCP stdio) → composition root → app service (agent runner
   → tool executor → tool handler → port → adapter
 ```
 
-- **Entrypoint** — `src/entrypoints/cli.ts` (`ask`, `tools`, `doctor`) or `mcp-stdio.ts` (M5):
-  parses input, owns the root `AbortController`, maps outcomes to exit codes or protocol responses.
-- **Composition root** — `src/bootstrap/create-application.ts`: builds config-driven adapters and
-  services once per process.
-- **App service** — `src/app/agent/` (M3): runs the bounded model loop through the `AgentModel`
-  port. The MCP path skips this hop and goes straight to the executor.
+- **Entrypoint** — `src/entrypoints/cli.ts` (`ask`, `tools`; `doctor` in M6) or `mcp-stdio.ts`
+  (M5): parses and validates input, owns the root `AbortController` (aborted on the first SIGINT),
+  maps outcomes to exit codes or protocol responses.
+- **Composition root** — `src/bootstrap/create-application.ts` builds the canonical tools and
+  executor once per process; `src/bootstrap/create-agent.ts` adds the OpenAI-backed agent only for
+  a command that calls the model, after it has loaded its credentials
+  (`src/bootstrap/composition.ts` holds both, and tests pass their own).
+- **App service** — `src/app/agent/agent-runner.ts`: runs the bounded model loop through the
+  `AgentModel` port ([agent loop](agent-loop.md)). The MCP path skips this hop and goes straight to
+  the executor.
 - **Tool executor** — `src/app/tools/tool-executor.ts`: the one pipeline every call passes.
 - **Tool handler** — `src/tools/<tool-name>/`: receives validated input and a narrow tool context.
 - **Port → adapter** — what the handler or service needs (clock, ids, note store, model, STT, TTS,
@@ -72,9 +76,11 @@ reason; there are none.
 - No hosted environment: the CLI runs on a developer machine, and the MCP server is spawned over
   stdio by an MCP host (Claude, the MCP Inspector). CI runs on Node 22 and 24 with fakes only —
   no API key, no provider network calls.
-- `src/config/config.ts` validates the environment at startup; invalid configuration exits with
-  code 78 and names the variable, never its value. `.env.example` lists every variable; variables
-  arrive with the milestone that uses them.
+- `src/config/config.ts` validates every non-secret variable at startup, for every command;
+  invalid configuration exits with code 78 and names the variable, never its value.
+  `OPENAI_API_KEY` is the exception: `src/config/openai-credentials.ts` reads it only for `ask`, so
+  `--help` and `tools` work without it, and `ask` exits 78 when it is missing. `.env.example` lists
+  every variable.
 - Runtime data (notes, generated audio) lives under the application-owned `DATA_DIR`
   (`.data/` by default, git-ignored), resolved to an absolute path against the working directory
   at startup. It must be on a local filesystem with hard links
@@ -98,7 +104,7 @@ validation schema for OpenAI, and placeholder adapters for providers that are no
 | [MCP](mcp.md) | The MCP server, its registration, stdio handling |
 | [Security](security.md) | Risk policy, confirmation, limits, filesystem access, secrets, retries |
 | [Observability](observability.md) | Log events, correlation fields, timings |
-| [Invariants](invariants.md) | Anything — the 29 repository invariants and where each is enforced |
+| [Invariants](invariants.md) | Anything — the 33 repository invariants and where each is enforced |
 | [Glossary](glossary.md) | Naming — the terms code and docs use exactly |
 
 Why the big choices were made: [decisions](../decisions/README.md).

@@ -1,17 +1,21 @@
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
+import { createModelTools } from "../../src/app/agent/model-tools.js";
 import { createApplication } from "../../src/bootstrap/create-application.js";
+import {
+  MAX_TOOL_ERROR_MESSAGE_JSON_BYTES,
+  toolErrorMessageJsonBytes,
+} from "../../src/domain/tool-execution-error.js";
 import type { ToolDefinition } from "../../src/tools/tool-definition.js";
+import { testConfig } from "../helpers/test-config.js";
 
 /**
  * Contract for every tool in the real registry, as the composition root builds it. Schemas are
  * checked through the JSON Schema that OpenAI (M3) and MCP (M5) will derive from them.
  */
-const { tools } = createApplication({
-  logLevel: "silent",
-  maxToolResultBytes: 16_384,
-  dataDir: "contract-test-data-dir-never-written",
-});
+const { tools } = createApplication(
+  testConfig({ dataDir: "contract-test-data-dir-never-written" }),
+);
 
 const schemaBranch = z.looseObject({
   type: z.string().optional(),
@@ -77,7 +81,39 @@ describe("tool registry contract", () => {
     });
   });
 
+  it("marks create_note as a key tool, so the agent host owns its key", () => {
+    expect(tools.find("create_note")?.idempotency).toBe("key");
+  });
+
+  /** Host-owned fields are hidden from the model; everything else reaches it unchanged. */
+  describe.each(createModelTools(tools.tools))("model-facing $name", (modelTool) => {
+    const tool = tools.find(modelTool.name);
+    const hostOwned = tool?.idempotency === "key" ? ["idempotencyKey"] : [];
+
+    it("exposes exactly the canonical properties minus host-owned fields", () => {
+      const canonical = tool === undefined ? [] : Object.keys(inputJsonSchema(tool).properties);
+      const projected = Object.keys(strictObjectSchema.parse(modelTool.parameters).properties);
+
+      expect(projected.sort()).toEqual(canonical.filter((key) => !hostOwned.includes(key)).sort());
+      expect(JSON.stringify(modelTool)).not.toContain("idempotencyKey");
+    });
+  });
+
   describe.each(tools.tools)("$name", (tool) => {
+    it("declares idempotency key exactly when its input takes an idempotencyKey", () => {
+      const takesKey = Object.keys(inputJsonSchema(tool).properties).includes("idempotencyKey");
+
+      expect(tool.idempotency === "key").toBe(takesKey);
+    });
+
+    it("keeps every failure message within the serialised byte bound", () => {
+      for (const failure of tool.failures) {
+        expect(toolErrorMessageJsonBytes(failure.message)).toBeLessThanOrEqual(
+          MAX_TOOL_ERROR_MESSAGE_JSON_BYTES,
+        );
+      }
+    });
+
     it("has a description for model selection", () => {
       expect(tool.description.trim().length).toBeGreaterThan(20);
     });

@@ -21,8 +21,7 @@ format (low latency by default), timeout and cancellation, bounded input length,
 handling, provider error mapping.
 
 Output is saved to `.data/output/<turn-id>.<ext>` (format decided in M4). Playback is an
-optional separate adapter so generation stays independent of OS-specific playback. The README
-must disclose that generated speech is AI-generated.
+optional separate adapter so generation stays independent of OS-specific playback.
 
 ## Input modes
 

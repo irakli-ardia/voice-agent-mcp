@@ -9,6 +9,7 @@ const echoTool = defineTool({
   description: "Echoes its text.",
   risk: "read",
   requiresConfirmation: false,
+  idempotency: "none",
   timeoutMs: 1_000,
   inputSchema: z.strictObject({ text: z.string().max(10) }),
   outputSchema: z.strictObject({ text: z.string() }),
@@ -85,5 +86,65 @@ describe("createToolRegistry", () => {
 
   it.each([1, 2_147_483_647])("accepts the timeout %d", (timeoutMs) => {
     expect(() => createToolRegistry([withTimeout(timeoutMs)])).not.toThrow();
+  });
+});
+
+describe("createToolRegistry: idempotency contract", () => {
+  const KEY = z
+    .string()
+    .min(16)
+    .max(64)
+    .regex(/^[A-Za-z0-9_-]+$/);
+
+  function keyed(inputSchema: z.ZodObject, idempotency: "none" | "key" = "key"): ToolDefinition {
+    return { ...echoTool, risk: "write", idempotency, inputSchema };
+  }
+
+  it("accepts a key tool whose required key field accepts a host-derived key", () => {
+    expect(() =>
+      createToolRegistry([keyed(z.strictObject({ text: z.string(), idempotencyKey: KEY }))]),
+    ).not.toThrow();
+  });
+
+  it.each([
+    ["no key field", z.strictObject({ text: z.string() })],
+    ["an optional key", z.strictObject({ idempotencyKey: KEY.optional() })],
+    ["a nullable key", z.strictObject({ idempotencyKey: KEY.nullable() })],
+    ["a numeric key", z.strictObject({ idempotencyKey: z.number() })],
+    [
+      "a key too short for a host-derived key",
+      z.strictObject({ idempotencyKey: z.string().max(20) }),
+    ],
+  ])("rejects a key tool with %s", (_kind, inputSchema) => {
+    expect(() => createToolRegistry([keyed(inputSchema)])).toThrow(/declares idempotency "key"/);
+  });
+
+  it("rejects a tool that takes an idempotencyKey but declares idempotency none", () => {
+    expect(() =>
+      createToolRegistry([keyed(z.strictObject({ idempotencyKey: KEY }), "none")]),
+    ).toThrow(/takes an idempotencyKey but declares idempotency "none"/);
+  });
+});
+
+describe("createToolRegistry: failure message bound", () => {
+  function withMessage(message: string): ToolDefinition {
+    return { ...echoTool, failures: [{ reason: "bad", message }] };
+  }
+
+  /** 1024 serialised bytes: 1022 characters plus the two quotes JSON adds. */
+  it("accepts a message whose serialised JSON is exactly 1024 bytes", () => {
+    expect(() => createToolRegistry([withMessage("a".repeat(1_022))])).not.toThrow();
+  });
+
+  it.each([
+    ["1025 serialised ASCII bytes", "a".repeat(1_023)],
+    ["multi-byte characters (342 × 3 bytes)", "€".repeat(342)],
+    ["characters JSON escapes (171 × 6 bytes)", "\u0001".repeat(171)],
+  ])("rejects a message of %s", (_kind, message) => {
+    expect(() => createToolRegistry([withMessage(message)])).toThrow(/over 1024 serialised bytes/);
+  });
+
+  it("measures bytes, not characters: 340 euro signs fit", () => {
+    expect(() => createToolRegistry([withMessage("€".repeat(340))])).not.toThrow();
   });
 });

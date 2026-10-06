@@ -5,15 +5,12 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createApplication } from "../../../src/bootstrap/create-application.js";
 import type { Config } from "../../../src/config/config.js";
+import { testConfig } from "../../helpers/test-config.js";
 
 let CONFIG: Config;
 
 beforeEach(async () => {
-  CONFIG = {
-    logLevel: "silent",
-    maxToolResultBytes: 16_384,
-    dataDir: await mkdtemp(join(tmpdir(), "create-application-")),
-  };
+  CONFIG = testConfig({ dataDir: await mkdtemp(join(tmpdir(), "create-application-")) });
 });
 
 afterEach(async () => {

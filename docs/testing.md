@@ -15,11 +15,14 @@ npx vitest run --changed
 | `npm run check:architecture` | `tests/architecture/` — dependency direction, `process.env` ownership, filesystem access only in persistence adapters, forbidden type escapes, the single tool execution path |
 | `npm run check:forbidden-types` | Only the forbidden-type-escape scan |
 | `npx vitest run --changed` | Tests affected by uncommitted changes |
+| `npm run test:openai` | Opt-in live suite in `tests/live/` against the real OpenAI API (builds first). Needs `OPENAI_API_KEY` and the network, and spends API credits; never part of `npm test`, `npm run check`, or CI |
 
-Planned with their milestones: `test:integration` (fakes, M3+), `test:e2e` (fake-provider audio →
-agent → tool → TTS flow, M4), `test:openai` (opt-in real API, `RUN_OPENAI_INTEGRATION=1`, never in
-default CI). Coverage excludes only the one-line bin `src/entrypoints/voice-agent.ts`; `runCli` in
-`src/entrypoints/cli.ts` takes its I/O as a parameter and is unit-tested.
+`npm test`, `npm run check`, and CI never need an API key, the network, or a live model: the OpenAI
+adapter is tested against the real SDK client with an injected `fetch` (`tests/helpers/fake-fetch.ts`),
+and the agent loop against a scripted `AgentModel` (`tests/helpers/fake-agent-model.ts`). Planned:
+`test:e2e` (fake-provider audio → agent → tool → TTS flow, M4). Coverage excludes only the bin
+`src/entrypoints/voice-agent.ts`; `runCli` in `src/entrypoints/cli.ts` takes its I/O, abort signal,
+and composition as parameters and is unit-tested.
 
 ## Layout
 
@@ -28,7 +31,8 @@ tests/
   unit/<src path>/<file>.test.ts   one file per source file, mirroring src/
   architecture/                    invariants scanned from source (imports, env, type escapes)
   contract/                        registry contract: names, descriptions, risk, failures, schemas (M1); adapters use the same registry (M3/M5)
-  integration/                     real wiring: notes on the file store through the executor (M2), fakes (M3+), MCP server in memory (M5)
+  integration/                     real wiring: notes on the file store through the executor; a whole agent turn with a fake model; MCP server in memory (M5)
+  live/                            opt-in checks against the real OpenAI API (`npm run test:openai`)
   fixtures/                        tiny audio and data fixtures
   helpers/                         typed fakes and scanners shared by tests
 ```
@@ -37,9 +41,11 @@ tests/
 
 - Each test states one situation and asserts what a caller observes, not how the code is
   structured internally. No huge provider-payload snapshots.
-- Fake at port boundaries (`Clock` and `NoteStore` today; `AgentModel`, `SpeechToText`,
-  `TextToSpeech`, and the id generator with their milestones) with typed fakes in `tests/helpers/`;
-  never module-mock implementation internals.
+- Fake at port boundaries (`Clock`, `IdGenerator`, `NoteStore`, `AgentModel` today;
+  `SpeechToText` and `TextToSpeech` in M4) with typed fakes in `tests/helpers/`; never module-mock
+  implementation internals. Test the OpenAI adapter through the real SDK client with a scripted
+  `fetch`, never by mocking the SDK. CLI tests pass their own composition (`createAgent` backed by
+  the fake model) and their own abort signal.
 - Test the file note store against the real filesystem in a fresh temporary directory, including
   50 concurrent creates with one key. Replace one of its `NoteFiles` steps only for a branch a real
   disk cannot produce on demand (an fsync or link failure); never replace the whole adapter.
@@ -66,5 +72,14 @@ executor, policy, and agent-loop code should be near-complete; don't chase 100 %
 ## What counts as verified
 
 Unit tests prove logic. They do not prove the CLI wires a command, that the MCP server keeps stdout
-clean, or that a real provider accepts the request. For those, run the built CLI or the MCP
-Inspector and note what you observed in the pull request.
+clean, or that a real provider accepts the request. For those, run the built CLI, the live suite,
+or the MCP Inspector and note what you observed in the pull request — metadata only: no prompts
+with user data, responses, reasoning, tool payloads, headers, or keys.
+
+The live suite covers: strict tool schemas accepted, including an empty object, string bounds, and
+nesting (hard); stateless continuation over two dependent tool rounds with each reasoning effort,
+counting reasoning items sent back (hard); several calls allowed per response; a recorded
+comparison of reasoning efforts; provider-error classification; and a built-CLI smoke run. It
+reports metadata only — outcomes, counts, latency, and token usage. Interrupting a real request is checked by hand: run
+`node dist/entrypoints/voice-agent.js ask --text "..."`, press Ctrl+C once while it waits, and expect
+exit code 130 and empty stdout; a second Ctrl+C ends the process immediately.

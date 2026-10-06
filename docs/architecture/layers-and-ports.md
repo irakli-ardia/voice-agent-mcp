@@ -23,8 +23,11 @@ The ubiquitous language is [the glossary](glossary.md); names in code use its te
 ## Domain
 
 - `src/domain/` holds the result type, JSON value types, the note type with its id, text, and key
-  formats, and the tool-execution error taxonomy (stable `code`, safe public message). A general
-  application error with retryability arrives with provider errors (M3). It imports nothing from other layers and no I/O module.
+  formats, the tool-execution error taxonomy (stable `code`, safe public message, and the
+  serialised message bound), and the turn error codes. Provider failures reach the app as model
+  failure codes on the `AgentModel` port and become turn errors there; there is no separate
+  retryability flag, because the adapter has already retried. It imports nothing from other layers
+  and no I/O module.
 - Pure functions, no clock reads (take `now` as an argument), no logging.
 
 ## Ports
@@ -35,8 +38,12 @@ The ubiquitous language is [the glossary](glossary.md); names in code use its te
 - Port signatures use canonical types and `AbortSignal`; never a provider SDK type.
 - A port with one implementation exists only at an I/O boundary (provider, filesystem, clock, ids,
   logging). Do not create ports for in-process logic.
-- No placeholder adapters for providers that are not implemented (plan §32): the abstraction is
-  proven by the test fakes.
+- No placeholder adapters for providers that are not implemented: the abstraction is proven by the
+  test fakes.
+- Ports today: `Clock`, `IdGenerator`, `Logger`, `NoteStore`, and `AgentModel`. `AgentModel` is
+  generic in its opaque continuation type, so a provider can carry its own protocol state through
+  the runner without any provider type crossing the port
+  ([decision 0009](../decisions/0009-stateless-agent-loop.md)).
 
 ## Adapters
 
@@ -60,8 +67,13 @@ The ubiquitous language is [the glossary](glossary.md); names in code use its te
 process and hands them to the entrypoints. A tool that needs a port is built here by its factory,
 which receives only that port (`defineCreateNoteTool(notes)`). Building the application performs
 no I/O. Entrypoints never construct an adapter or a tool.
-Tests build services with fakes the same way. Shutdown ownership (`src/bootstrap/shutdown.ts`,
-planned M3/M6) lives beside it.
+
+The application holds no optional capabilities: the OpenAI-backed agent is composed separately by
+`src/bootstrap/create-agent.ts`, only for a command that calls the model and only after that command
+has loaded its credentials. `src/bootstrap/composition.ts` bundles both factories; the CLI takes a
+composition as a parameter, so tests supply a fake model there instead of through flags,
+environment switches, or globals. Tests build services with fakes the same way. Shutdown ownership
+(`src/bootstrap/shutdown.ts`, planned M6) lives beside it.
 
 ## Adding a port and adapter
 

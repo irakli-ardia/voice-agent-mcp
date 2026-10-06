@@ -4,7 +4,11 @@ import { createToolExecutor, type ToolExecutor } from "../../../../src/app/tools
 import { createToolRegistry } from "../../../../src/app/tools/tool-registry.js";
 import type { JsonObject } from "../../../../src/domain/json-value.js";
 import { err, ok, type Result } from "../../../../src/domain/result.js";
-import type { ToolExecutionError } from "../../../../src/domain/tool-execution-error.js";
+import {
+  MAX_TOOL_ERROR_MESSAGE_JSON_BYTES,
+  type ToolExecutionError,
+  toolErrorMessageJsonBytes,
+} from "../../../../src/domain/tool-execution-error.js";
 import type { LogFields, Logger } from "../../../../src/ports/logger.js";
 import {
   defineTool,
@@ -34,6 +38,7 @@ function echoTool(execute: EchoHandler): ToolDefinition {
     description: "Echoes its text.",
     risk: "read",
     requiresConfirmation: false,
+    idempotency: "none",
     timeoutMs: TIMEOUT_MS,
     inputSchema: z.strictObject({ text: z.string().max(40) }),
     outputSchema: z.strictObject({ text: z.string() }),
@@ -279,6 +284,7 @@ describe("createToolExecutor: input validation", () => {
       description: "Takes twelve numbers.",
       risk: "read",
       requiresConfirmation: false,
+      idempotency: "none",
       timeoutMs: TIMEOUT_MS,
       inputSchema: z.strictObject(fields),
       outputSchema: z.strictObject({}),
@@ -302,6 +308,7 @@ describe("createToolExecutor: policy", () => {
     description: "Deletes everything.",
     risk: "destructive",
     requiresConfirmation: true,
+    idempotency: "none",
     timeoutMs: TIMEOUT_MS,
     inputSchema: z.strictObject({ text: z.string().max(40) }),
     outputSchema: z.strictObject({}),
@@ -473,6 +480,7 @@ describe("createToolExecutor: unexpected failures", () => {
       description: "Has a buggy refinement.",
       risk: "read",
       requiresConfirmation: false,
+      idempotency: "none",
       timeoutMs: TIMEOUT_MS,
       inputSchema: z.strictObject({
         text: z.string().refine(() => {
@@ -500,6 +508,7 @@ describe("createToolExecutor: unexpected failures", () => {
       description: "Has a buggy output refinement.",
       risk: "read",
       requiresConfirmation: false,
+      idempotency: "none",
       timeoutMs: TIMEOUT_MS,
       inputSchema: z.strictObject({}),
       outputSchema: z.strictObject({
@@ -973,5 +982,141 @@ describe("createToolExecutor: toolCallId in logs", () => {
 
     expect(codeOf(await execute({ ...VALID, id }, idle()))).toBe("ok");
     expect(logger.entries[0]?.fields).toEqual(expect.objectContaining({ toolCallId: logged }));
+  });
+});
+
+describe("createToolExecutor: error message byte bound", () => {
+  function bytesOf(result: Result<JsonObject, ToolExecutionError>): number {
+    return result.ok ? 0 : toolErrorMessageJsonBytes(result.error.message);
+  }
+
+  /** A tool whose only issue carries a custom message: "Invalid arguments: a: <message>." */
+  function customIssueTool(message: string): ToolDefinition {
+    return defineTool({
+      name: "custom",
+      description: "Rejects every value with a custom message.",
+      risk: "read",
+      requiresConfirmation: false,
+      idempotency: "none",
+      timeoutMs: TIMEOUT_MS,
+      inputSchema: z.strictObject({ a: z.string().refine(() => false, { message }) }),
+      outputSchema: z.strictObject({}),
+      failures: {},
+      execute: async () => ok({}),
+    });
+  }
+
+  async function invalidInputMessage(message: string): Promise<string> {
+    const { execute } = harness([customIssueTool(message)]);
+    const result = await execute({ id: "call-1", name: "custom", arguments: { a: "x" } }, idle());
+
+    return result.ok ? "" : result.error.message;
+  }
+
+  // "Invalid arguments: a: " (22) + message + "." (1) + two JSON quotes (2) = message + 25 bytes.
+  it("keeps an issue whose serialised message is exactly 1024 bytes", async () => {
+    const message = await invalidInputMessage("m".repeat(999));
+
+    expect(message).toBe(`Invalid arguments: a: ${"m".repeat(999)}.`);
+    expect(toolErrorMessageJsonBytes(message)).toBe(MAX_TOOL_ERROR_MESSAGE_JSON_BYTES);
+  });
+
+  it("falls back to a fixed message when one issue would exceed the bound by one byte", async () => {
+    expect(await invalidInputMessage("m".repeat(1_000))).toBe("Invalid arguments.");
+  });
+
+  it("measures serialised bytes, so escaped and multi-byte text counts in full", async () => {
+    expect(await invalidInputMessage("\u0001".repeat(170))).toBe("Invalid arguments.");
+    expect(await invalidInputMessage("€".repeat(333))).toBe(
+      `Invalid arguments: a: ${"€".repeat(333)}.`,
+    );
+    expect(await invalidInputMessage("€".repeat(334))).toBe("Invalid arguments.");
+  });
+
+  it("lists only the issues that fit, counts the rest, and stays within the bound", async () => {
+    const fields = Object.fromEntries(
+      Array.from({ length: 10 }, (_, index) => [
+        `field_${index}`,
+        z.string().refine(() => false, { message: "x".repeat(200) }),
+      ]),
+    );
+
+    const wide = defineTool({
+      name: "wide",
+      description: "Rejects ten fields with long messages.",
+      risk: "read",
+      requiresConfirmation: false,
+      idempotency: "none",
+      timeoutMs: TIMEOUT_MS,
+      inputSchema: z.strictObject(fields),
+      outputSchema: z.strictObject({}),
+      failures: {},
+      execute: async () => ok({}),
+    });
+
+    const args = Object.fromEntries(
+      Array.from({ length: 10 }, (_, index) => [`field_${index}`, "v"]),
+    );
+
+    const { execute } = harness([wide]);
+
+    const result = await execute({ id: "call-1", name: "wide", arguments: args }, idle());
+    const message = result.ok ? "" : result.error.message;
+
+    expect(message).toMatch(/^Invalid arguments: field_0: x+; field_1: x+; .*; and \d+ more\.$/);
+    expect(message.split("; ").length).toBeLessThan(10);
+    expect(bytesOf(result)).toBeLessThanOrEqual(MAX_TOOL_ERROR_MESSAGE_JSON_BYTES);
+  });
+
+  it("keeps every fixed executor message within the bound", async () => {
+    const destructive = defineTool({
+      name: "wipe",
+      description: "Wipes everything.",
+      risk: "destructive",
+      requiresConfirmation: true,
+      idempotency: "none",
+      timeoutMs: TIMEOUT_MS,
+      inputSchema: z.strictObject({}),
+      outputSchema: z.strictObject({}),
+      failures: {},
+      execute: async () => ok({}),
+    });
+
+    const throwing = defineTool({
+      name: "throws",
+      description: "Throws.",
+      risk: "read",
+      requiresConfirmation: false,
+      idempotency: "none",
+      timeoutMs: TIMEOUT_MS,
+      inputSchema: z.strictObject({}),
+      outputSchema: z.strictObject({ n: z.number() }),
+      failures: {},
+      execute: async () => {
+        throw new Error("boom");
+      },
+    });
+
+    const { execute } = harness([echoTool(echoBack), destructive, throwing]);
+    const cancelled = new AbortController();
+    cancelled.abort();
+
+    const results = [
+      await execute({ id: "c", name: "missing", arguments: {} }, idle()),
+      await execute({ id: "c", name: "wipe", arguments: {} }, idle()),
+      await execute({ id: "c", name: "throws", arguments: {} }, idle()),
+      await execute(VALID, cancelled.signal),
+    ];
+
+    expect(results.map(codeOf)).toEqual([
+      "unknown_tool",
+      "confirmation_required",
+      "internal_error",
+      "cancelled",
+    ]);
+
+    for (const result of results) {
+      expect(bytesOf(result)).toBeLessThanOrEqual(MAX_TOOL_ERROR_MESSAGE_JSON_BYTES);
+    }
   });
 });

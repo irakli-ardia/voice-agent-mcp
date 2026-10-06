@@ -18,3 +18,13 @@ export interface ToolExecutionError {
   readonly code: ToolErrorCode;
   readonly message: string;
 }
+
+/**
+ * Bound on every tool error message, as the UTF-8 byte length of `JSON.stringify(message)`, so
+ * JSON escaping is included and a serialised error has an exact maximum size.
+ */
+export const MAX_TOOL_ERROR_MESSAGE_JSON_BYTES = 1024;
+
+export function toolErrorMessageJsonBytes(message: string): number {
+  return new TextEncoder().encode(JSON.stringify(message)).byteLength;
+}

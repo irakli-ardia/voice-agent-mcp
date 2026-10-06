@@ -13,6 +13,7 @@ export function defineReadNoteTool(notes: NoteStore): ToolDefinition {
       "user asks what a note says. It cannot search or list notes.",
     risk: "read",
     requiresConfirmation: false,
+    idempotency: "none",
     timeoutMs: 2_000,
     inputSchema: z.strictObject({
       noteId: z

@@ -39,6 +39,7 @@ export const getCurrentTimeTool = defineTool({
     "Use it whenever an answer depends on the current date or time; never guess them.",
   risk: "read",
   requiresConfirmation: false,
+  idempotency: "none",
   timeoutMs: 1_000,
   inputSchema: z.strictObject({
     timeZone: z

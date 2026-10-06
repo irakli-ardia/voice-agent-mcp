@@ -3,7 +3,8 @@
 The architectural centerpiece: a tool is defined once and every caller — the OpenAI agent loop and
 the MCP server — derives from that definition and executes through one executor. Status: the
 definition, registry, executor, and two read-only tools are built (M1); `create_note` and
-`read_note` on a file-backed note store are built (M2).
+`read_note` on a file-backed note store are built (M2); idempotency metadata, the model-facing
+schema projection, and the agent loop's use of both are built (M3).
 
 ## Tool definition
 
@@ -20,6 +21,7 @@ definition, registry, executor, and two read-only tools are built (M1); `create_
 | `risk` | `read`, `write`, `destructive`, or `external`; a `destructive` tool must set `requiresConfirmation: true` (enforced by the type) |
 | `timeoutMs` | Per-tool execution budget: an integer from 1 to 2³¹−1 |
 | `requiresConfirmation` | Whether the host must obtain confirmation before execution |
+| `idempotency` | `"key"` when the input takes the canonical required `idempotencyKey`, otherwise `"none"` ([write tools](#write-tools-and-idempotency)) |
 | `failures` | Expected failure reasons, each with a static, client-safe message |
 | `execute(input, context)` | Receives validated input; returns `ok(output)` or `err(reason)` |
 
@@ -53,10 +55,16 @@ to the error log.
 - `src/app/tools/tool-registry.ts`: the set of definitions, looked up by exact, case-sensitive
   name with a `Map`. `constructor`, `__proto__`, or a name with different case or whitespace does
   not resolve.
-- Built once by the composition root; a duplicate name, an invalid name, or an out-of-range
-  `timeoutMs` throws at startup.
-- From the registry, adapters derive OpenAI function-tool metadata (M3), MCP tool registration
-  (M5), and the `tools` catalog (M3). No hand-written OpenAI or MCP tool definitions exist anywhere.
+- Built once by the composition root. At startup it throws for a duplicate name, an invalid name,
+  an out-of-range `timeoutMs`, an `idempotency` value that disagrees with the input schema (in
+  either direction), or a declared failure message over the byte bound below.
+- From the registry come the model-facing function tools (`src/app/agent/model-tools.ts`), the
+  `voice-agent tools` catalog, and, in M5, MCP tool registration. No hand-written OpenAI or MCP
+  tool definitions exist anywhere.
+- The model-facing schema is projected from the canonical Zod schema: for a `key` tool,
+  `idempotencyKey` is omitted on a new schema (the canonical one is never changed), then converted
+  to JSON Schema. A projection that is not strict-compatible — an open object or an optional
+  property at any depth — throws at startup.
 
 ## Executor pipeline
 
@@ -88,7 +96,11 @@ Callers must treat an unknown outcome as "may have executed". A `cancelled` call
 never started is in fact effect-free, but it shares the conservative meaning so callers have one
 rule; the log field `handlerInvoked` tells operators which it was.
 
-`invalid_input` messages list each issue's path with Zod's message, at most ten. Zod's built-in
+`invalid_input` messages list each issue's path with Zod's message: at most ten, and only as many
+as keep the message within `MAX_TOOL_ERROR_MESSAGE_JSON_BYTES` (1024 bytes, measured as the UTF-8
+length of the message's JSON string, so escaping counts); the rest are counted, and if not even one
+fits the message is a fixed `Invalid arguments.`. Every other error message is a fixed string or a
+declared failure message, which the registry also holds to that bound. Zod's built-in
 messages name the expected type or limit, not the rejected value, and unknown property names are
 omitted because they come from the caller. Two things are not guarded by the executor, so tool
 schemas must avoid them: a custom message (from `refine` or an `error` option) is passed through
@@ -125,8 +137,9 @@ never invoked.
 
 `MAX_TOOL_RESULT_BYTES` bounds the UTF-8 byte length of the serialised JSON result that leaves the
 executor. It does not bound memory or CPU a handler uses, or the size of an object a handler builds
-before it is validated and measured. Argument size is bounded by the transport (M3, M5) and by
-schema limits such as `maxLength`.
+before it is validated and measured. Argument size is bounded by the provider's output limit in the
+agent loop (`OPENAI_MAX_OUTPUT_TOKENS`), by the transport over MCP (M5), and by schema limits such
+as `maxLength`.
 
 ## Write tools and idempotency
 
@@ -135,9 +148,14 @@ A write retried after an unknown outcome must not repeat its effect
 
 - Every `write` tool takes a required, non-null, bounded `idempotencyKey`
   (`tests/contract/tool-registry.test.ts`). There is no keyless write path.
-- The key belongs to the caller of the executor. In the agent loop that is the host, which derives
-  it from the turn, the tool, and the arguments, so the model never sees or supplies it (M3). An
-  MCP client supplies its own (M5).
+- A tool that takes the key declares `idempotency: "key"`; `defineTool` refuses `"key"` unless the
+  parsed input has a required `idempotencyKey` string, and the registry checks the declaration
+  against the schema in both directions. The agent loop discovers host-owned keys only from this
+  metadata, never from the tool's name or risk.
+- The key belongs to the caller of the executor. In the agent loop that is the host: the field is
+  absent from the model-facing schema, and the runner derives the key from the turn, the tool, and
+  the other arguments ([agent loop](agent-loop.md#arguments-and-host-owned-keys)), replacing any key
+  the model sends. An MCP client supplies its own (M5).
 - `create_note`: one key names one note. The same key and the same text replay the original note
   with `created: false`; the same key and different text fail with `idempotency_key_conflict`;
   different keys create different notes, even with the same text. Text is compared exactly.
@@ -173,10 +191,11 @@ The store's commit point and its guarantees are in [security](security.md#filesy
 1. Create `src/tools/<tool-name>/<tool-name>-tool.ts`. A tool that needs a port exports a factory
    (`define<Name>Tool(port)`) instead of a constant.
 2. Define strict input and output Zod schemas; describe every input property.
-3. Define metadata (name, description, risk, timeout, confirmation) and the expected `failures`.
-   A `write` tool takes a required `idempotencyKey` and must make a repeated key a no-op.
+3. Define metadata (name, description, risk, timeout, confirmation, idempotency) and the expected
+   `failures`, each message within 1024 serialised bytes. A `write` tool takes a required
+   `idempotencyKey`, declares `idempotency: "key"`, and must make a repeated key a no-op.
 4. Implement `execute` against the tool context; return `ok(output)` or `err(reason)`.
 5. Add the definition to the registry in `src/bootstrap/create-application.ts`.
 6. Add unit tests through the executor (valid, invalid input, each failure reason; idempotency if
    it writes). `tests/contract/tool-registry.test.ts` checks the new tool automatically.
-7. OpenAI and MCP expose it automatically once their adapters exist (M3, M5).
+7. The agent loop exposes it automatically; MCP will too (M5).

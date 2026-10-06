@@ -31,6 +31,7 @@ export const calculateTool = defineTool({
     "several calls.",
   risk: "read",
   requiresConfirmation: false,
+  idempotency: "none",
   timeoutMs: 1_000,
   inputSchema: z.strictObject({
     operation: operationSchema.describe("The operation to apply: a <operation> b."),

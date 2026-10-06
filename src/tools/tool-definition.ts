@@ -19,6 +19,13 @@ export interface ToolContext {
 
 export type RiskLevel = "read" | "write" | "destructive" | "external";
 
+/**
+ * `key`: the input has the required `idempotencyKey` (the note key contract), owned by whoever calls
+ * the executor — the host in the agent loop, which derives it so the model never sees it; the client
+ * over MCP. `none`: the tool takes no idempotency key.
+ */
+export type ToolIdempotency = "none" | "key";
+
 /** An expected failure: a declared reason (safe to log) and its static, client-safe message. */
 export interface ToolFailure {
   readonly reason: string;
@@ -39,9 +46,11 @@ export type ToolSpec<
   Input extends z.ZodObject,
   Output extends JsonObject,
   Failure extends string,
+  Idempotency extends ToolIdempotency = ToolIdempotency,
 > = ToolSafety & {
   readonly name: string;
   readonly description: string;
+  readonly idempotency: Idempotency;
   readonly timeoutMs: number;
   readonly inputSchema: Input;
   readonly outputSchema: z.ZodType<Output, Output>;
@@ -64,6 +73,15 @@ type LiteralFailureReasons<Failure extends string> = [Failure] extends [never]
     ? { readonly failures: "declare each failure reason as a literal key" }
     : unknown;
 
+/** Rejects `idempotency: "key"` unless the parsed input has a required `idempotencyKey` string. */
+type KeyedInput<Input extends z.ZodObject, Idempotency extends ToolIdempotency> = [
+  Idempotency,
+] extends ["key"]
+  ? z.output<Input> extends { readonly idempotencyKey: string }
+    ? unknown
+    : { readonly idempotency: "declare a required idempotencyKey string in the input schema" }
+  : unknown;
+
 /** A handler already bound to validated input, waiting only for its context. */
 export type BoundToolHandler = (context: ToolContext) => Promise<Result<JsonObject, ToolFailure>>;
 
@@ -75,8 +93,10 @@ export interface ToolDefinition {
   readonly description: string;
   readonly risk: RiskLevel;
   readonly requiresConfirmation: boolean;
+  readonly idempotency: ToolIdempotency;
   readonly timeoutMs: number;
-  readonly inputSchema: z.ZodType;
+  /** Canonical and never mutated; model-facing schemas are projected from it. */
+  readonly inputSchema: z.ZodObject;
   readonly outputSchema: z.ZodType<JsonObject>;
   /** Every expected failure the tool may report, with its static, client-safe message. */
   readonly failures: readonly ToolFailure[];
@@ -92,12 +112,18 @@ export function defineTool<
   Input extends z.ZodObject,
   Output extends JsonObject,
   Failure extends string = never,
->(spec: ToolSpec<Input, Output, Failure> & LiteralFailureReasons<Failure>): ToolDefinition {
+  Idempotency extends ToolIdempotency = "none",
+>(
+  spec: ToolSpec<Input, Output, Failure, Idempotency> &
+    LiteralFailureReasons<Failure> &
+    KeyedInput<Input, Idempotency>,
+): ToolDefinition {
   return {
     name: spec.name,
     description: spec.description,
     risk: spec.risk,
     requiresConfirmation: spec.requiresConfirmation,
+    idempotency: spec.idempotency,
     timeoutMs: spec.timeoutMs,
     inputSchema: spec.inputSchema,
     outputSchema: spec.outputSchema,

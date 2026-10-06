@@ -23,6 +23,7 @@ const divideTool = defineTool({
   description: "Divides a by b.",
   risk: "read",
   requiresConfirmation: false,
+  idempotency: "none",
   timeoutMs: 1_000,
   inputSchema: z.strictObject({ a: z.number(), b: z.number() }),
   outputSchema: z.strictObject({ quotient: z.number() }),
@@ -42,6 +43,7 @@ describe("defineTool", () => {
       description: "Divides a by b.",
       risk: "read",
       requiresConfirmation: false,
+      idempotency: "none",
       timeoutMs: 1_000,
       failures: [{ reason: "division_by_zero", message: "Division by zero is undefined." }],
     });
@@ -105,7 +107,12 @@ const FIXTURE_IMPORTS = [
 ].join("\n");
 
 const BASE_SPEC =
-  'name: "t", description: "d", risk: "read", requiresConfirmation: false, timeoutMs: 1,';
+  'name: "t", description: "d", risk: "read", requiresConfirmation: false, idempotency: "none", ' +
+  "timeoutMs: 1,";
+
+const KEYED_SPEC =
+  'name: "t", description: "d", risk: "write", requiresConfirmation: false, idempotency: "key", ' +
+  "timeoutMs: 1,";
 
 const FIXTURES: readonly { readonly name: string; readonly body: string }[] = [
   {
@@ -123,7 +130,51 @@ export const withoutFailures = defineTool({ ${BASE_SPEC}
   execute: async ({ zone }, context) => ok({ zone: zone ?? context.clock.now().toISOString() }),
 });
 export const destructive = defineTool({ name: "d", description: "d", risk: "destructive",
-  requiresConfirmation: true, timeoutMs: 1,
+  requiresConfirmation: true, idempotency: "none", timeoutMs: 1,
+  inputSchema: z.strictObject({}), outputSchema: z.strictObject({}), failures: {},
+  execute: async () => ok({}),
+});
+export const keyed = defineTool({ ${KEYED_SPEC}
+  inputSchema: z.strictObject({ text: z.string(), idempotencyKey: z.string().min(16) }),
+  outputSchema: z.strictObject({ key: z.string() }), failures: {},
+  execute: async ({ idempotencyKey }) => ok({ key: idempotencyKey }),
+});`,
+  },
+  {
+    name: "keyed-without-key-field",
+    body: `export const t = defineTool({ ${KEYED_SPEC}
+  inputSchema: z.strictObject({ text: z.string() }), outputSchema: z.strictObject({}), failures: {},
+  execute: async () => ok({}),
+});`,
+  },
+  {
+    name: "keyed-with-optional-key",
+    body: `export const t = defineTool({ ${KEYED_SPEC}
+  inputSchema: z.strictObject({ idempotencyKey: z.string().optional() }),
+  outputSchema: z.strictObject({}), failures: {},
+  execute: async () => ok({}),
+});`,
+  },
+  {
+    name: "keyed-with-nullable-key",
+    body: `export const t = defineTool({ ${KEYED_SPEC}
+  inputSchema: z.strictObject({ idempotencyKey: z.string().nullable() }),
+  outputSchema: z.strictObject({}), failures: {},
+  execute: async () => ok({}),
+});`,
+  },
+  {
+    name: "keyed-with-numeric-key",
+    body: `export const t = defineTool({ ${KEYED_SPEC}
+  inputSchema: z.strictObject({ idempotencyKey: z.number() }),
+  outputSchema: z.strictObject({}), failures: {},
+  execute: async () => ok({}),
+});`,
+  },
+  {
+    name: "missing-idempotency",
+    body: `export const t = defineTool({ name: "t", description: "d", risk: "read",
+  requiresConfirmation: false, timeoutMs: 1,
   inputSchema: z.strictObject({}), outputSchema: z.strictObject({}), failures: {},
   execute: async () => ok({}),
 });`,
@@ -197,7 +248,7 @@ export const t = defineTool({ ${BASE_SPEC}
   {
     name: "destructive-without-confirmation",
     body: `export const t = defineTool({ name: "t", description: "d", risk: "destructive",
-  requiresConfirmation: false, timeoutMs: 1,
+  requiresConfirmation: false, idempotency: "none", timeoutMs: 1,
   inputSchema: z.strictObject({}), outputSchema: z.strictObject({}), failures: {},
   execute: async () => ok({}),
 });`,
