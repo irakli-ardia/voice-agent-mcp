@@ -22,8 +22,9 @@ The ubiquitous language is [the glossary](glossary.md); names in code use its te
 
 ## Domain
 
-- `src/domain/` holds the error taxonomy and result types (M1): stable `code`, safe public message,
-  internal `cause`, retryability. It imports nothing from other layers and no I/O module.
+- `src/domain/` holds the result type, JSON value types, and the tool-execution error taxonomy
+  (stable `code`, safe public message). A general application error with retryability arrives
+  with provider errors (M3). It imports nothing from other layers and no I/O module.
 - Pure functions, no clock reads (take `now` as an argument), no logging.
 
 ## Ports

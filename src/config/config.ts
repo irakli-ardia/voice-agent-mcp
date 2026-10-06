@@ -7,9 +7,11 @@ export type LogLevel = z.output<typeof logLevelSchema>;
 const configSchema = z
   .object({
     LOG_LEVEL: logLevelSchema.default("info"),
+    MAX_TOOL_RESULT_BYTES: z.coerce.number().int().min(1).max(1_048_576).default(16_384),
   })
   .transform((env) => ({
     logLevel: env.LOG_LEVEL,
+    maxToolResultBytes: env.MAX_TOOL_RESULT_BYTES,
   }));
 
 export type Config = Readonly<z.output<typeof configSchema>>;

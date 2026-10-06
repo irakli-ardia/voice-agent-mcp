@@ -18,12 +18,12 @@ This file is the complete list.
 
 | # | Rule | Enforced by |
 | --- | --- | --- |
-| 6 | Every model-callable action exists in the canonical registry | Contract tests (planned, M1/M3/M5) |
+| 6 | Every model-callable action exists in the canonical registry | `tests/contract/tool-registry.test.ts`; adapter contract tests (planned, M3/M5) |
 | 7 | OpenAI and MCP never implement separate tool handlers | Contract test: both adapters derive from the same registry (planned, M5) |
-| 8 | Every tool has input and output validation | Contract test over the registry (planned, M1) |
-| 9 | Every tool has risk metadata | Tool definition type + contract test (planned, M1) |
-| 10 | Every tool execution passes through policy + timeout + logging | Single executor; adapters tested to call it (planned, M1/M3/M5) |
-| 11 | Destructive tools cannot self-confirm through the LLM | Confirmation gate in the executor + tests (planned, M6) |
+| 8 | Every tool has input and output validation | `defineTool` types, executor validation, `tests/contract/tool-registry.test.ts` |
+| 9 | Every tool has risk metadata | `ToolSpec` type (destructive requires confirmation), `tests/contract/tool-registry.test.ts` |
+| 10 | Every tool execution passes through policy + timeout + logging | Single executor, `tests/architecture/tool-execution-path.test.ts`; adapters tested to call it (planned, M3/M5) |
+| 11 | Destructive tools cannot self-confirm through the LLM | Executor policy fails closed until the host confirmation channel exists (M6); executor tests |
 
 ## Architecture invariants
 
@@ -41,7 +41,7 @@ This file is the complete list.
 | --- | --- | --- |
 | 17 | Every external call has a timeout/cancellation strategy | Ports take `AbortSignal`; adapter tests (planned, M3–M4) |
 | 18 | Agent loop is bounded | Max-iteration test (planned, M3) |
-| 19 | Tool-result size is bounded | Executor test (planned, M1/M3) |
+| 19 | The serialised tool result leaving the executor is bounded (not handler memory) | `MAX_TOOL_RESULT_BYTES`, executor tests |
 | 20 | Logs are structured and secret-safe | pino adapter with redaction + `tests/unit/adapters/logging/pino-logger.test.ts` |
 | 21 | MCP stdio never logs to stdout | Logger defaults to stderr; MCP stdout-clean test (planned, M5) |
 | 22 | Shutdown is graceful | Shutdown tests (planned, M6) |

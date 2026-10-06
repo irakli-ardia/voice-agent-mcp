@@ -17,7 +17,7 @@ cp .env.example .env   # then fill in values
 npm run dev
 ```
 
-Nothing else today. `npm run dev` with no command prints usage (commands arrive in M1–M5).
+Nothing else today. `npm run dev` with no command prints usage (commands arrive in M3–M5).
 Run the full local gate with `npm run check`.
 
 ## Running

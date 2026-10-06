@@ -12,7 +12,7 @@ npx vitest run --changed
 | --- | --- |
 | `npm test` | Every test under `tests/` (Vitest 5), no network |
 | `npm run test:coverage` | Same, with v8 coverage and thresholds (lines/functions/statements 90 %, branches 85 %) |
-| `npm run check:architecture` | `tests/architecture/` — dependency direction, `process.env` ownership, forbidden type escapes |
+| `npm run check:architecture` | `tests/architecture/` — dependency direction, `process.env` ownership, forbidden type escapes, the single tool execution path |
 | `npm run check:forbidden-types` | Only the forbidden-type-escape scan |
 | `npx vitest run --changed` | Tests affected by uncommitted changes |
 
@@ -27,7 +27,7 @@ default CI). Coverage excludes only the one-line bin `src/entrypoints/voice-agen
 tests/
   unit/<src path>/<file>.test.ts   one file per source file, mirroring src/
   architecture/                    invariants scanned from source (imports, env, type escapes)
-  contract/                        registry/adapter contracts (M1+): same registry for OpenAI and MCP, unique names, schemas, risk
+  contract/                        registry contract: names, descriptions, risk, failures, schemas (M1); adapters use the same registry (M3/M5)
   integration/                     wiring with fakes (M3+), MCP server in memory (M5)
   fixtures/                        tiny audio and data fixtures
   helpers/                         typed fakes and scanners shared by tests
@@ -37,8 +37,13 @@ tests/
 
 - Each test states one situation and asserts what a caller observes, not how the code is
   structured internally. No huge provider-payload snapshots.
-- Fake at port boundaries (`AgentModel`, `SpeechToText`, `TextToSpeech`, `Clock`, `IdGenerator`,
-  note store) with typed fakes in `tests/helpers/`; never module-mock implementation internals.
+- Fake at port boundaries (`Clock` today; `AgentModel`, `SpeechToText`, `TextToSpeech`, id
+  generator, and note store with their milestones) with typed fakes in `tests/helpers/`; never
+  module-mock implementation internals.
+- Test a tool through the real executor (`tests/helpers/run-tool.ts`), as every production caller
+  runs it. Compile-time contracts that must *not* compile are proved by compiling fixtures with the
+  real TypeScript compiler (`tests/unit/tools/tool-definition.test.ts`), never with
+  `@ts-expect-error`.
 - No sleep-based timing: inject the clock and use Vitest fake timers or `AbortSignal`s.
 - A bug fix lands with a test that fails without the fix. Behaviour lands with its tests in the
   same change, not after.

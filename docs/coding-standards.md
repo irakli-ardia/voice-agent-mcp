@@ -69,8 +69,10 @@ Approved exceptions: none.
 
 ### Errors
 
-- Expected failures are explicit: typed errors with a stable `code`, a safe public message, an
-  internal `cause`, and retryability, or a result union (designed in M1 under `src/domain/`).
+- Expected failures are explicit: a `Result` (`src/domain/result.ts`) whose error carries a stable
+  `code` and a safe public message; internal causes go to logs only. A tool reports an expected
+  failure as a declared reason with a static message, never as runtime text
+  ([tool system](architecture/tool-system.md#expected-failures-stay-client-safe)).
 - Exceptions are for exceptional infrastructure failures and are mapped at boundaries: provider
   error → adapter mapping → application error → protocol-safe representation.
 - Preserve causes (`new SomeError("…", { cause: error })`). Never swallow an error, never
@@ -83,6 +85,7 @@ Approved exceptions: none.
 | Error or result type, other provider-free domain primitive | `src/domain/` |
 | Interface the app needs from the outside world | `src/ports/<role>.ts` |
 | A model-callable tool | `src/tools/<tool-name>/` ([tool system](architecture/tool-system.md#adding-a-tool)) |
+| The tool definition contract (`defineTool`, tool context) | `src/tools/tool-definition.ts` |
 | Registry, executor, or policy | `src/app/tools/` |
 | Agent loop | `src/app/agent/` |
 | Transcribe / synthesize services | `src/app/audio/` |
@@ -100,7 +103,7 @@ Something only one file uses stays in that file or beside it.
 ## Naming and files
 
 - Files and folders are kebab-case ASCII (Biome `useFilenamingConvention`). One primary export per
-  file, named after it: `execute-tool.ts` → `executeTool`.
+  file, named after it: `tool-registry.ts` → `createToolRegistry`.
 - Ports are named for their role, one interface per file: `src/ports/clock.ts` → `Clock`.
 - Suffixes: `*-store.ts` (persistence adapter for one record type), `*-mapper.ts` (protocol ↔
   canonical translation), `*-errors.ts` (one provider's error mapping), `*.test.ts` (tests under

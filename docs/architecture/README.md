@@ -11,10 +11,10 @@ orchestration library ([decision 0001](../decisions/0001-initial-stack.md)).
 
 ```
 src/
-  domain/        errors and result types; imports nothing else (M1)
+  domain/        result, JSON value, and tool error types; imports nothing else
   ports/         interfaces the app owns: model, STT, TTS, clock, ids, logger
   app/           agent runner, audio services, tool registry/executor/policy
-  tools/         one folder per canonical tool definition
+  tools/         the definition contract, and one folder per canonical tool
   adapters/      openai, mcp, persistence, system, logging implementations
   config/        the only process.env reader; Zod-validated config
   bootstrap/     composition root
@@ -59,7 +59,7 @@ entrypoint (CLI or MCP stdio) → composition root → app service (agent runner
   services once per process.
 - **App service** — `src/app/agent/` (M3): runs the bounded model loop through the `AgentModel`
   port. The MCP path skips this hop and goes straight to the executor.
-- **Tool executor** — `src/app/tools/` (M1): the one pipeline every call passes.
+- **Tool executor** — `src/app/tools/tool-executor.ts`: the one pipeline every call passes.
 - **Tool handler** — `src/tools/<tool-name>/`: receives validated input and a narrow tool context.
 - **Port → adapter** — what the handler or service needs (clock, ids, note store, model, STT, TTS,
   logger), implemented in `src/adapters/` and chosen only in bootstrap.

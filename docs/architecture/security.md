@@ -21,13 +21,17 @@ treatment.
 | `external` | Depends on irreversible effects; decided per tool |
 
 Confirmation is obtained outside the LLM — for the CLI, an explicit user prompt or token handled by
-the host. The model cannot confirm its own destructive request.
+the host. The model cannot confirm its own destructive request. Until the host confirmation
+channel exists (M6), the executor fails closed: every tool that requires confirmation is refused
+with `confirmation_required`.
 
 ## Idempotency
 
 `create_note` accepts an optional caller-provided idempotency key, or the host derives a scoped
-operation key, so provider/network retries do not duplicate the effect. Scope and expiry are
-defined in M2 (open question) and tested with duplicate calls. Never claim exactly-once; document
+operation key, so provider/network retries do not duplicate the effect. A `timed_out` or
+`cancelled` result does not mean the handler stopped: its outcome is unknown, so a retry after
+either must be safe to repeat ([tool system](tool-system.md#timeouts-and-cancellation)).
+Scope and expiry are defined in M2 (open question) and tested with duplicate calls. Never claim exactly-once; document
 the at-least-once reality.
 
 ## Filesystem safety (file-backed notes)
@@ -39,7 +43,9 @@ where practical; atomic writes; persisted data validated on read; corruption han
 ## Denial and cost controls
 
 Input limits, audio size limit, TTS text limit, agent-loop limit, tool-call limit, timeouts, a
-concurrency bound if needed, no unlimited retries.
+concurrency bound if needed, no unlimited retries. `MAX_TOOL_RESULT_BYTES` caps the serialised
+result that leaves the tool executor; it does not limit a handler's memory or CPU
+([tool system](tool-system.md#result-size-cap)).
 
 ## Secrets and logging privacy
 

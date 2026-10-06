@@ -7,10 +7,12 @@ CLI output use these words consistently; a design discussion adds to this list w
 | --- | --- | --- |
 | Turn | One user request (text or audio) processed to a final answer and optional speech; identified by `turnId` | A whole conversation or session |
 | Agent iteration | One model request/response round inside a turn; capped by `MAX_AGENT_ITERATIONS` | A turn |
-| Tool definition | The single canonical object: name, description, input and output Zod schemas, risk, timeout, confirmation flag, handler | An OpenAI function definition or MCP tool entry (both are derived from it) |
+| Tool definition | The single canonical object `defineTool` returns: name, description, input and output Zod schemas, risk, timeout, confirmation flag, declared failures, and the handler bound through `bindArguments` | An OpenAI function definition or MCP tool entry (both are derived from it) |
 | Tool registry | The set of tool definitions, looked up by exact name only | Dynamic property lookup on an object |
-| Tool executor | The one pipeline every tool call passes: lookup → validate input → policy → confirmation → timeout → execute → validate output → map errors → log | A tool handler |
+| Tool executor | The one pipeline every tool call passes: lookup → validate input → policy (confirmation) → timeout → execute → validate output → size cap → map errors → log | A tool handler |
 | Tool call | A request from the model or an MCP client to run a named tool with raw (untrusted) arguments; identified by `toolCallId` | A tool execution that already passed validation |
+| Failure reason | A tool's declared identifier for an expected failure (`division_by_zero`), mapped to a static, client-safe message | A thrown error or its message (those become `internal_error`) |
+| Outcome unknown | The meaning of `timed_out`, `cancelled`, and `internal_error`: the executor stopped waiting, and the handler may or may not have completed its effect | Proof that nothing happened |
 | Risk level | `read`, `write`, `destructive`, or `external`; drives the policy decision | Log level |
 | Confirmation | Explicit approval from the user or host, obtained outside the model | The model saying the user agreed |
 | Host | The process presenting tools to a model: the CLI agent or an MCP client | The OpenAI or MCP SDK |

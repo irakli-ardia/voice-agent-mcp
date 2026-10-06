@@ -13,8 +13,9 @@ and the rules for every model call. Status: planned (M3). Audio is in
   with the tool's Zod input schema. Free-form model text is never parsed by hand.
 - Model output is untrusted: it never supplies file paths, environment values, or confirmation
   ([security](security.md)).
-- Budgets (iterations, tool calls, result size, audio size, TTS text, timeouts) come from config and
-  are enforced centrally in the agent runner and executor, not per tool.
+- Budgets (iterations, tool calls, result size, audio size, TTS text, provider timeouts) come from
+  config and are enforced centrally in the agent runner and executor. A tool's own execution
+  budget is its `timeoutMs` ([tool system](tool-system.md#timeouts-and-cancellation)).
 - Model and voice names are configuration, never hard-coded.
 - Each model call is logged with provider, model, latency, attempt, and outcome — never secrets,
   prompts, or transcripts by default ([observability](observability.md)).
@@ -37,8 +38,9 @@ Responses API, not legacy Chat Completions patterns, and keep model names in con
 ## Loop protection
 
 Hard limits, all from config: maximum agent iterations, maximum tool calls per turn, maximum
-serialised tool-result size, provider timeout, tool timeout. A runaway model loop terminates
-predictably with a typed error.
+serialised tool-result size, provider timeout. Tool budgets come from each definition's
+`timeoutMs`, not config; a turn deadline, if needed, reaches the executor as the caller's
+`AbortSignal`. A runaway model loop terminates predictably with a typed error.
 
 ## Conversation state (v1)
 
