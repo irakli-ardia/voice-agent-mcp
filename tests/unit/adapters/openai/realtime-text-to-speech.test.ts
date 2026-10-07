@@ -45,11 +45,18 @@ afterEach(async () => {
   server = undefined;
 });
 
-/** Counts listeners the adapter adds and removes, on the real platform `WebSocket`. */
+/** Counts sockets the adapter opens and listeners it adds and removes, on the real platform `WebSocket`. */
 class CountingWebSocket extends WebSocket {
+  static opened = 0;
+
   static added = 0;
 
   static removed = 0;
+
+  constructor(...args: ConstructorParameters<typeof WebSocket>) {
+    super(...args);
+    CountingWebSocket.opened += 1;
+  }
 
   override addEventListener(...args: Parameters<WebSocket["addEventListener"]>): void {
     CountingWebSocket.added += 1;
@@ -79,6 +86,7 @@ async function harness(options: HarnessOptions = {}): Promise<Harness> {
 
   const sleeps: number[] = [];
 
+  CountingWebSocket.opened = 0;
   CountingWebSocket.added = 0;
   CountingWebSocket.removed = 0;
 
@@ -857,7 +865,10 @@ describe("Realtime renderer: provider failures and retries", () => {
     const h = await harness({ server: serverOptions, maxRetries: 2 });
 
     expect(await h.tts.synthesize(ANSWER, live())).toEqual(failure("unavailable"));
-    expect(h.server.upgrades()).toBe(3);
+    // Attempts are sockets, not server upgrades: Node 24's WebSocket re-sends a handshake answered
+    // 401 once on its own, so the server can see two upgrades for one attempt.
+    expect(CountingWebSocket.opened).toBe(3);
+    expect(lastEvent()).toMatchObject({ attempts: 3 });
     expect(h.sleeps).toEqual([250, 500]);
   });
 
