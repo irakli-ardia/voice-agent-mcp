@@ -16,3 +16,17 @@ describe("productionComposition", () => {
     expect(runTurn).toBeInstanceOf(Function);
   });
 });
+
+describe("productionComposition: speech", () => {
+  it("composes the transcriber and the speech output lazily, from credentials, with no I/O", () => {
+    const application = createApplication(testConfig({ dataDir: "never-written-data-dir" }));
+    const credentials = { apiKey: "sk-test-key" };
+
+    expect(productionComposition.createTranscriber(application, credentials)).toBeInstanceOf(
+      Function,
+    );
+    expect(productionComposition.createSpeechOutput(application, credentials)).toBeInstanceOf(
+      Function,
+    );
+  });
+});

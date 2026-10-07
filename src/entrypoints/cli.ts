@@ -1,15 +1,18 @@
-import { parseArgs } from "node:util";
 import { type Composition, productionComposition } from "../bootstrap/composition.js";
 import type { Application } from "../bootstrap/create-application.js";
 import { loadConfig } from "../config/config.js";
-import { loadOpenAiCredentials } from "../config/openai-credentials.js";
-import type { TurnErrorCode } from "../domain/turn-error.js";
+import { loadOpenAiCredentials, type OpenAiCredentials } from "../config/openai-credentials.js";
+import type { Result } from "../domain/result.js";
+import type { SpeechError, SpeechErrorCode } from "../domain/speech-error.js";
+import type { TurnError, TurnErrorCode } from "../domain/turn-error.js";
+import { type AskCommand, parseCommand, USAGE, USAGE_REASONS } from "./cli-arguments.js";
 
 export const EXIT_OK = 0;
 
-/** Every typed turn failure without a more specific code below. */
+/** Every typed failure without a more specific code below. */
 export const EXIT_FAILURE = 1;
 
+/** Command-line usage, and input the user can correct before any provider is used. */
 export const EXIT_USAGE = 64;
 
 export const EXIT_UNAVAILABLE = 69;
@@ -25,9 +28,9 @@ export const EXIT_INTERRUPTED = 130;
 
 const EXIT_CODES = {
   cancelled: EXIT_INTERRUPTED,
+  internal_error: EXIT_SOFTWARE,
   turn_timed_out: EXIT_TEMPFAIL,
   model_unavailable: EXIT_UNAVAILABLE,
-  internal_error: EXIT_SOFTWARE,
   iteration_limit_exceeded: EXIT_FAILURE,
   tool_call_limit_exceeded: EXIT_FAILURE,
   model_rejected: EXIT_FAILURE,
@@ -35,17 +38,25 @@ const EXIT_CODES = {
   model_incomplete: EXIT_FAILURE,
   model_refused: EXIT_FAILURE,
   model_protocol_error: EXIT_FAILURE,
-} satisfies { readonly [Code in TurnErrorCode]: number };
-
-const USAGE = `Usage: voice-agent <command> [options]
-
-Commands:
-  ask --text <text>   Answer one request, calling tools when needed (needs OPENAI_API_KEY)
-  tools               List the tools the agent can call
-
-Options:
-  -h, --help          Show this help
-`;
+  audio_unreadable: EXIT_USAGE,
+  audio_too_large: EXIT_USAGE,
+  audio_unsupported: EXIT_USAGE,
+  speech_output_exists: EXIT_USAGE,
+  transcription_timed_out: EXIT_TEMPFAIL,
+  synthesis_timed_out: EXIT_TEMPFAIL,
+  transcription_unavailable: EXIT_UNAVAILABLE,
+  synthesis_unavailable: EXIT_UNAVAILABLE,
+  transcription_empty: EXIT_FAILURE,
+  transcription_too_long: EXIT_FAILURE,
+  transcription_rejected: EXIT_FAILURE,
+  transcription_protocol_error: EXIT_FAILURE,
+  synthesis_text_too_long: EXIT_FAILURE,
+  synthesis_rejected: EXIT_FAILURE,
+  synthesis_incomplete: EXIT_FAILURE,
+  synthesis_unfaithful: EXIT_FAILURE,
+  synthesis_protocol_error: EXIT_FAILURE,
+  speech_output_failed: EXIT_FAILURE,
+} satisfies { readonly [Code in TurnErrorCode | SpeechErrorCode]: number };
 
 /** Process I/O handed in by the bin, so the CLI runs in tests without touching the process. */
 export interface CliIo {
@@ -55,106 +66,6 @@ export interface CliIo {
   readonly env?: Readonly<Record<string, string | undefined>>;
   /** Aborted by the bin on the first SIGINT. */
   readonly signal: AbortSignal;
-}
-
-/** A usage problem; also the logged value, so it never contains user input. */
-type UsageProblem =
-  | "invalid_arguments"
-  | "unknown_command"
-  | "text_not_allowed"
-  | "missing_text"
-  | "repeated_text"
-  | "blank_text"
-  | "text_too_long";
-
-const USAGE_REASONS = {
-  invalid_arguments: undefined,
-  unknown_command: undefined,
-  text_not_allowed: "--text is only valid with ask",
-  missing_text: 'ask needs --text "<text>"',
-  repeated_text: "--text may be given once",
-  blank_text: "--text must not be blank",
-  text_too_long: "--text is longer than MAX_INPUT_TEXT_CHARS",
-} satisfies { readonly [Problem in UsageProblem]: string | undefined };
-
-type Command =
-  | { readonly kind: "help" }
-  | { readonly kind: "tools" }
-  | { readonly kind: "ask"; readonly text: string }
-  | { readonly kind: "usage"; readonly problem: UsageProblem; readonly command: string | null };
-
-const COMMANDS = new Set(["ask", "tools"]);
-
-function askProblem(
-  text: string | undefined,
-  textOptions: number,
-  maxChars: number,
-): UsageProblem | undefined {
-  if (text === undefined) {
-    return "missing_text";
-  }
-
-  if (textOptions > 1) {
-    return "repeated_text";
-  }
-
-  if (text.trim() === "") {
-    return "blank_text";
-  }
-
-  return text.length > maxChars ? "text_too_long" : undefined;
-}
-
-function parseAsk(text: string | undefined, textOptions: number, maxChars: number): Command {
-  const problem = askProblem(text, textOptions, maxChars);
-
-  if (problem !== undefined || text === undefined) {
-    return { kind: "usage", problem: problem ?? "missing_text", command: "ask" };
-  }
-
-  return { kind: "ask", text };
-}
-
-/** Validates arguments before any application or model work starts. */
-function parseCommand(argv: readonly string[], maxInputTextChars: number): Command {
-  let parsed: ReturnType<typeof parseArgsWithTokens>;
-
-  try {
-    parsed = parseArgsWithTokens(argv);
-  } catch {
-    return { kind: "usage", problem: "invalid_arguments", command: null };
-  }
-
-  const { values, positionals, tokens } = parsed;
-  const name = positionals[0];
-  const command = name !== undefined && COMMANDS.has(name) ? name : null;
-
-  if (values.help === true) {
-    return { kind: "help" };
-  }
-
-  if (command === null || positionals.length !== 1) {
-    return { kind: "usage", problem: "unknown_command", command };
-  }
-
-  const textOptions = tokens.filter((token) => token.kind === "option" && token.name === "text");
-
-  if (command === "tools") {
-    return textOptions.length > 0
-      ? { kind: "usage", problem: "text_not_allowed", command }
-      : { kind: "tools" };
-  }
-
-  return parseAsk(values.text, textOptions.length, maxInputTextChars);
-}
-
-function parseArgsWithTokens(argv: readonly string[]) {
-  return parseArgs({
-    args: [...argv],
-    allowPositionals: true,
-    tokens: true,
-    options: { help: { type: "boolean", short: "h" }, text: { type: "string" } },
-  });
 }
 
 /** One line per tool, in registry order: name, risk, and description. */
@@ -167,12 +78,71 @@ function terminalLine(answer: string): string {
   return `${answer.replace(/\r?\n$/, "")}\n`;
 }
 
-async function runAsk(
-  text: string,
-  application: Application,
-  io: CliIo,
-  composition: Composition,
-): Promise<number> {
+/** Reports a typed failure: one safe line on stderr, the mapped exit code. */
+function failed(io: CliIo, error: TurnError | SpeechError): number {
+  io.stderr(`error: ${error.code}: ${error.message}\n`);
+
+  return EXIT_CODES[error.code];
+}
+
+/** Saves the final answer as speech into the reserved file. */
+type SaveSpeech = (answer: string, signal: AbortSignal) => Promise<Result<void, SpeechError>>;
+
+/** Everything one `ask` uses, composed only for the parts the command asked for. */
+interface AskContext {
+  readonly command: AskCommand;
+  readonly application: Application;
+  readonly io: CliIo;
+  readonly composition: Composition;
+  readonly credentials: OpenAiCredentials;
+}
+
+/** The request text: as typed, or transcribed from the audio file. */
+async function requestText(context: AskContext): Promise<Result<string, SpeechError>> {
+  const { command, application, io, composition, credentials } = context;
+
+  if (command.input.kind === "text") {
+    return { ok: true, value: command.input.text };
+  }
+
+  const transcribe = composition.createTranscriber(application, credentials);
+
+  return transcribe(command.input.path, io.signal);
+}
+
+/**
+ * Text (or transcription) → agent turn → answer on stdout → optional speech. Once the answer is on
+ * stdout it stays there: a later speech failure adds one error line on stderr and a non-zero exit.
+ */
+async function answer(context: AskContext, save: SaveSpeech | null): Promise<number> {
+  const { application, io, composition, credentials } = context;
+  const text = await requestText(context);
+
+  if (!text.ok) {
+    return failed(io, text.error);
+  }
+
+  const runTurn = composition.createAgent(application, credentials);
+  const turn = await runTurn(text.value, io.signal);
+
+  if (!turn.ok) {
+    return failed(io, turn.error);
+  }
+
+  io.stdout(terminalLine(turn.value));
+
+  if (save === null) {
+    return EXIT_OK;
+  }
+
+  const saved = await save(turn.value, io.signal);
+
+  return saved.ok ? EXIT_OK : failed(io, saved.error);
+}
+
+/** Reserves the speech file first, before any provider is used, and always releases it. */
+async function runAsk(context: Omit<AskContext, "credentials">): Promise<number> {
+  const { command, application, io, composition } = context;
   const credentials = loadOpenAiCredentials(io.env);
 
   if (!credentials.ok) {
@@ -181,18 +151,27 @@ async function runAsk(
     return EXIT_CONFIG;
   }
 
-  const runTurn = composition.createAgent(application, credentials.credentials);
-  const result = await runTurn(text, io.signal);
+  const full: AskContext = { ...context, credentials: credentials.credentials };
 
-  if (result.ok) {
-    io.stdout(terminalLine(result.value));
-
-    return EXIT_OK;
+  if (command.speechOut === null) {
+    return answer(full, null);
   }
 
-  io.stderr(`error: ${result.error.code}: ${result.error.message}\n`);
+  const reserve = composition.createSpeechOutput(application, credentials.credentials);
+  const reserved = await reserve(command.speechOut, io.signal);
 
-  return EXIT_CODES[result.error.code];
+  if (!reserved.ok) {
+    return failed(io, reserved.error);
+  }
+
+  const output = reserved.value;
+
+  try {
+    return await answer(full, async (text, signal) => output.save(text, signal));
+  } finally {
+    // Removes the reserved file unless the answer was saved into it.
+    await output.discard();
+  }
 }
 
 /** Parses arguments, wires what the command needs, and resolves to the process exit code. */
@@ -222,7 +201,7 @@ export async function runCli(
 
       return EXIT_OK;
     case "ask":
-      return runAsk(command.text, application, io, composition);
+      return runAsk({ command, application, io, composition });
     case "usage": {
       const reason = USAGE_REASONS[command.problem];
 

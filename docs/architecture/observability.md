@@ -10,9 +10,10 @@ Structured logging and timing events.
 - Messages are constant dotted event names (`turn.started`, `tool.timed_out`); data goes in fields.
 - Known secret fields are redacted (`apiKey`, `authorization`, `OPENAI_API_KEY`, one level deep).
 - Level from `LOG_LEVEL` (default `info`).
-- Never logged: prompts or user text, assistant text, transcripts, tool arguments or results, note
-  text, idempotency keys, the provider continuation (including encrypted reasoning), provider error
-  messages or bodies, request headers, API keys, raw audio.
+- Never logged: prompts or user text, assistant text, tool arguments or results, note text,
+  idempotency keys, the provider continuation (including encrypted reasoning), provider error
+  messages or bodies, request headers or ids, API keys, file paths and names, audio bytes or base64,
+  transcriptions, spoken text, Realtime event payloads.
 
 ## Correlation fields
 
@@ -21,9 +22,10 @@ random UUID the host generates per turn; it is never sent to the model.
 
 ## Events worth logging
 
-Turn started/completed/failed; transcription started/completed; model request completed; tool
-completed/failed; TTS started/completed; MCP client connected/disconnected where available;
-graceful shutdown.
+Turn started/completed/failed; model request completed/failed; tool completed/failed; transcription
+and speech-to-text request completed/failed; speech rendering and text-to-speech request
+completed/failed; audio file failures. Planned: MCP client connected/disconnected (M5), graceful
+shutdown (M6).
 
 ## Turn events
 
@@ -79,7 +81,27 @@ The file note store logs `note_store.unavailable` (warn: `operation`, `phase`, `
 `ENOENT`, never an error message, which would carry an absolute path. Note text, idempotency keys,
 paths, and stored file contents are never logged; `noteId` is a one-way hash of the key.
 
+## Speech events
+
+Each speech operation logs one application event and one provider event, plus a file event when a
+file step fails. Counts and durations are allowed; content and paths never are.
+
+| Event | Level | Fields |
+| --- | --- | --- |
+| `transcription.completed` / `transcription.failed` | info / warn (error for `internal_error`) | `outcome` (`ok` or the speech error code), `durationMs`, `chars` (length of the transcription, on success), `problem` when relevant |
+| `stt.request_completed` / `stt.request_failed` | info / warn | `provider`, `model`, `attempts`, `durationMs`, `outcome`, `format`, `inputBytes`, usage (`audioSeconds`, or `inputTokens`/`outputTokens`), `httpStatus`, `providerCode`, `problem` |
+| `synthesis.completed` / `synthesis.failed` | info / warn (error for `internal_error`) | `outcome`, `durationMs`, `wavBytes` (on success), `spokenTextMatched` (`true` on success, `false` for `synthesis_unfaithful`), `problem` when relevant |
+| `tts.request_completed` / `tts.request_failed` | info / warn | `provider`, `transport` (`realtime`), `model`, `voice`, `attempts`, `durationMs`, `inputChars`, `outcome`, `pcmBytes`, `audioSeconds`, `responseStatus`, `incompleteReason`, usage (`inputTokens`, `outputTokens`, `outputAudioTokens`), `errorType`/`errorCode` (only when they match `^[a-z0-9_.]{1,64}$`), `closeCode`, `problem` |
+| `speech_output.reserve_failed` | warn (error for `internal_error`) | `outcome` |
+| `speech_output.discard_failed` | error | `problem` |
+| `audio_file.failed` | warn | `operation` (`read`, `reserve`, `write`, `discard`), `problem` (such as `not_regular_file`, `not_owned`, `write_failed`), `errorCode` (a system code such as `ENOENT`, never a message) |
+
+What this supports: speech latency per stage (`durationMs`, `audioSeconds`), provider health
+(`outcome`, `httpStatus`, `errorType`/`errorCode`, `attempts`), cost (`audioSeconds`, token counts),
+fidelity failures (`spokenTextMatched: false`), and file problems (`audio_file.failed`). What it
+cannot show, by design: what was said, transcribed, or spoken, and which file was used.
+
 ## Metrics
 
-No metrics backend. Structured timing events (transcription, model per iteration, tool, TTS, total
-turn) that could later feed OpenTelemetry or Prometheus. OpenTelemetry traces are a stretch goal.
+No metrics backend. Structured timing events (transcription, model per iteration, tool, speech
+rendering, total turn) that could later feed OpenTelemetry or Prometheus. OpenTelemetry traces are a stretch goal.

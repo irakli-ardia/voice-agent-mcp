@@ -22,7 +22,7 @@ import type {
 } from "../../ports/agent-model.js";
 import type { Clock } from "../../ports/clock.js";
 import type { LogFields, Logger } from "../../ports/logger.js";
-import { classifyOpenAiError, type OpenAiFailure } from "./openai-failure.js";
+import { failedAttempt, type OpenAiFailure } from "./openai-failure.js";
 import { type AttemptOutcome, type RetryPolicy, runWithRetries } from "./retry-policy.js";
 
 /**
@@ -260,14 +260,11 @@ export function createResponsesAgentModel(
 
       return { retry: false, value: { kind: "response", response } };
     } catch (cause) {
-      const outcome = classifyOpenAiError(
-        cause instanceof Error ? cause : new Error("non-error thrown"),
+      return failedAttempt(
+        cause,
         signal,
+        (failure): AttemptResult => ({ kind: "failure", failure }),
       );
-
-      const value: AttemptResult = { kind: "failure", failure: outcome.value };
-
-      return outcome.retry ? { ...outcome, value } : { retry: false, value };
     }
   };
 

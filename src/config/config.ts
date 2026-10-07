@@ -5,6 +5,23 @@ const logLevelSchema = z.enum(["fatal", "error", "warn", "info", "debug", "trace
 
 export type LogLevel = z.output<typeof logLevelSchema>;
 
+/** Provider model ids: letters, digits, and `._:-`, so an id is safe in a URL query and a log. */
+const modelIdSchema = z.string().regex(/^[A-Za-z0-9._:-]{1,64}$/);
+
+/** The built-in voices the OpenAI Realtime API documents; custom voice ids are not supported. */
+const voiceSchema = z.enum([
+  "alloy",
+  "ash",
+  "ballad",
+  "coral",
+  "echo",
+  "sage",
+  "shimmer",
+  "verse",
+  "marin",
+  "cedar",
+]);
+
 const configSchema = z
   .object({
     LOG_LEVEL: logLevelSchema.default("info"),
@@ -14,10 +31,7 @@ const configSchema = z
     MAX_TOOL_CALLS_PER_TURN: z.coerce.number().int().min(1).max(128).default(16),
     MAX_INPUT_TEXT_CHARS: z.coerce.number().int().min(1).max(32_000).default(4_000),
     AGENT_TURN_TIMEOUT_MS: z.coerce.number().int().min(5_000).max(600_000).default(120_000),
-    OPENAI_MODEL: z
-      .string()
-      .regex(/^[A-Za-z0-9._:-]{1,64}$/)
-      .default("gpt-6-luna"),
+    OPENAI_MODEL: modelIdSchema.default("gpt-6-luna"),
     OPENAI_TIMEOUT_MS: z.coerce.number().int().min(1_000).max(600_000).default(60_000),
     // Digits only: an empty value must not silently mean zero retries.
     OPENAI_MAX_RETRIES: z
@@ -28,6 +42,10 @@ const configSchema = z
       .pipe(z.number().int().min(0).max(5)),
     OPENAI_MAX_OUTPUT_TOKENS: z.coerce.number().int().min(256).max(32_768).default(4_096),
     OPENAI_REASONING_EFFORT: z.enum(["none", "low"]).default("none"),
+    OPENAI_STT_MODEL: modelIdSchema.default("gpt-transcribe"),
+    OPENAI_TTS_MODEL: modelIdSchema.default("gpt-realtime-2.1-mini"),
+    OPENAI_TTS_VOICE: voiceSchema.default("marin"),
+    SPEECH_TIMEOUT_MS: z.coerce.number().int().min(5_000).max(600_000).default(180_000),
   })
   .transform((env) => ({
     logLevel: env.LOG_LEVEL,
@@ -51,6 +69,15 @@ const configSchema = z
       maxRetries: env.OPENAI_MAX_RETRIES,
       maxOutputTokens: env.OPENAI_MAX_OUTPUT_TOKENS,
       reasoningEffort: env.OPENAI_REASONING_EFFORT,
+      /** Speech-to-text model for audio input. */
+      sttModel: env.OPENAI_STT_MODEL,
+      /** Realtime model that renders the final answer as speech. */
+      ttsModel: env.OPENAI_TTS_MODEL,
+      ttsVoice: env.OPENAI_TTS_VOICE,
+    },
+    speech: {
+      /** One budget per speech operation: every step, attempt, wait, and byte received. */
+      timeoutMs: env.SPEECH_TIMEOUT_MS,
     },
   }));
 

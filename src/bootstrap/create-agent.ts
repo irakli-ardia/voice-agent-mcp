@@ -1,15 +1,11 @@
-import { setTimeout as delay } from "node:timers/promises";
 import { createOpenAiClient } from "../adapters/openai/openai-client.js";
 import { createResponsesAgentModel } from "../adapters/openai/responses-agent-model.js";
 import { systemClock } from "../adapters/system/system-clock.js";
 import { systemIdGenerator } from "../adapters/system/system-id-generator.js";
 import { type AgentRunner, createAgentRunner } from "../app/agent/agent-runner.js";
 import type { OpenAiCredentials } from "../config/openai-credentials.js";
+import { abortableSleep } from "./abortable-sleep.js";
 import type { Application } from "./create-application.js";
-
-async function sleep(milliseconds: number, signal: AbortSignal): Promise<void> {
-  await delay(milliseconds, undefined, { signal });
-}
 
 /**
  * Composes the agent for a command that calls OpenAI, on top of the canonical tools and executor.
@@ -24,7 +20,7 @@ export function createAgent(application: Application, credentials: OpenAiCredent
     model: config.openai.model,
     maxOutputTokens: config.openai.maxOutputTokens,
     reasoningEffort: config.openai.reasoningEffort,
-    retry: { maxRetries: config.openai.maxRetries, random: Math.random, sleep },
+    retry: { maxRetries: config.openai.maxRetries, random: Math.random, sleep: abortableSleep },
     clock: systemClock,
     logger,
   });

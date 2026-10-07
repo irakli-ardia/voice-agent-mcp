@@ -1,6 +1,6 @@
 # Invariants
 
-The project's 33 repository invariants, numbered, with where each is enforced.
+The project's 36 repository invariants, numbered, with where each is enforced.
 This file is the complete list.
 "Planned" names the milestone that adds the enforcement.
 
@@ -35,21 +35,29 @@ This file is the complete list.
 | 12 | Application/domain cannot import provider SDKs | `tests/architecture/dependency-direction.test.ts`, fallow zones, Biome overrides |
 | 13 | Entrypoints contain composition and I/O wiring, not business logic | Architecture test (no adapter/tool imports), Biome override; review |
 | 14 | Only the config module reads environment variables | Biome `noProcessEnv` (off only in `src/config`), architecture test |
-| 15 | Only persistence adapters touch storage implementation details | `tests/architecture/dependency-direction.test.ts` (filesystem modules only under `src/adapters/persistence/`); review |
-| 16 | Provider errors are translated before crossing adapter boundaries | OpenAI adapter error-mapping tests (status and code only, never message text); audio adapters (planned, M4) |
+| 15 | Only persistence adapters touch storage implementation details (notes, audio files) | `tests/architecture/dependency-direction.test.ts` (filesystem modules only under `src/adapters/persistence/`); review |
+| 16 | Provider errors are translated before crossing adapter boundaries | OpenAI adapter error-mapping tests: Responses, speech-to-text, and the Realtime renderer classify by status, type, and code only, never message text |
 | 32 | The agent loop keeps no provider-side state: stateless requests (`store: false`), no `previous_response_id` or conversation, and the provider continuation is opaque to the app | Responses adapter request tests, `AgentModel` port types, [decision 0009](../decisions/0009-stateless-agent-loop.md) |
 
 ## Operational invariants
 
 | # | Rule | Enforced by |
 | --- | --- | --- |
-| 17 | Every external call has a timeout/cancellation strategy | Ports take `AbortSignal`; OpenAI per-attempt timeout and abortable retries (adapter tests); audio (planned, M4) |
+| 17 | Every external call has a timeout/cancellation strategy | Ports take `AbortSignal`; OpenAI per-attempt timeout and abortable retries (adapter tests); a speech deadline per transcription and rendering (`SPEECH_TIMEOUT_MS`, app tests); cancellation in every renderer state (loopback WebSocket tests) |
 | 18 | Agent loop is bounded | Iteration, tool-call, and turn-deadline tests in `tests/unit/app/agent/agent-runner.test.ts` |
 | 19 | The serialised tool result leaving the executor is bounded (not handler memory) | `MAX_TOOL_RESULT_BYTES`, executor tests |
 | 33 | Every tool error message is at most 1024 bytes as serialised JSON, so a tool-result envelope has an exact maximum size | Executor `invalid_input` cap, registry startup check, executor, registry, and adapter envelope tests |
 | 20 | Logs are structured and secret-safe | pino adapter with redaction + `tests/unit/adapters/logging/pino-logger.test.ts` |
 | 21 | MCP stdio never logs to stdout | Logger defaults to stderr; MCP stdout-clean test (planned, M5) |
 | 22 | Shutdown is graceful | Shutdown tests (planned, M6) |
+
+## Speech invariants
+
+| # | Rule | Enforced by |
+| --- | --- | --- |
+| 34 | Audio enters only from a file the CLI user names; the only file written is the explicitly named output, created exclusively, never overwritten, and removed unless committed | `tests/unit/entrypoints/cli-arguments.test.ts`, `tests/unit/adapters/persistence/local-audio-files.test.ts`, `tests/integration/voice-ask.test.ts`, `tests/unit/app/audio/speech-output.test.ts` |
+| 35 | Audio bytes, file paths, transcriptions, and spoken text never reach stdout, stderr, or logs; stdout carries only the answer | Privacy tests in `tests/unit/entrypoints/cli-speech.test.ts`, the speech services, and the speech adapters |
+| 36 | The speech renderer never decides content: no tools, no conversation, the answer sent only as data, and audio saved only when the spoken text matches the answer word for word | `tests/unit/adapters/openai/realtime-text-to-speech.test.ts` (exact request, event integrity), `tests/unit/app/audio/spoken-text-matches.test.ts`, `tests/unit/app/audio/speech-output.test.ts` |
 
 ## Process invariants
 

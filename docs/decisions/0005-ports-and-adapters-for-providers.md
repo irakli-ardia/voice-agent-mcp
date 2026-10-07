@@ -18,6 +18,8 @@ errors never leave that folder. Only OpenAI is implemented; no placeholder adapt
 - App, tool, and domain tests use typed fakes and never import `openai`.
 - Adapters carry the error mapping and response normalisation burden.
 - The abstraction is proven by the fakes, not by speculative second providers.
+- M4 kept the ports when the speech-output provider path changed from a speech endpoint to the
+  Realtime API: only the adapter differs ([0010](0010-speech-pipeline-around-the-text-agent.md)).
 
 ## Alternatives considered
 

@@ -8,7 +8,10 @@ export interface RecordedRequest {
   readonly url: string;
   readonly method: string;
   readonly headers: Headers;
+  /** The parsed JSON body, or `null` for a multipart request. */
   readonly body: JsonValue;
+  /** The multipart body of an upload, as the SDK handed it to `fetch`; `null` for JSON. */
+  readonly form: FormData | null;
 }
 
 /** One scripted HTTP exchange. Returning `"hang"` waits until the request is aborted. */
@@ -36,12 +39,19 @@ function abortError(): Error {
   return new DOMException("This operation was aborted", "AbortError");
 }
 
+/** A multipart upload is kept as the SDK built it; anything else must be a JSON body. */
+function recordBody(body: RequestInit["body"]): Pick<RecordedRequest, "body" | "form"> {
+  return body instanceof FormData
+    ? { body: null, form: body }
+    : { body: bodySchema.parse(body ?? "null"), form: null };
+}
+
 function recordRequest(...[input, init]: Parameters<Fetch>): RecordedRequest {
   return {
     url: input instanceof Request ? input.url : String(input),
     method: init?.method ?? "GET",
     headers: new Headers(init?.headers),
-    body: bodySchema.parse(init?.body ?? "null"),
+    ...recordBody(init?.body),
   };
 }
 
@@ -77,7 +87,7 @@ async function settle(
 export function createFakeFetch(exchanges: readonly FakeExchange[]): FakeFetch {
   const requests: RecordedRequest[] = [];
 
-  const fetch: Fetch = async (input, init) => {
+  const send: Fetch = async (input, init) => {
     const request = recordRequest(input, init);
     const exchange = exchanges[requests.length];
 
@@ -90,5 +100,7 @@ export function createFakeFetch(exchanges: readonly FakeExchange[]): FakeFetch {
     return settle(exchange, request, init?.signal ?? undefined);
   };
 
-  return { fetch, requests };
+  // The SDK checks FormData support with `fetch.Response` when present, and otherwise by calling
+  // `fetch("data:,")`, which would consume a scripted exchange.
+  return { fetch: Object.assign(send, { Response }), requests };
 }

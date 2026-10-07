@@ -5,9 +5,9 @@ CLI output use these words consistently; a design discussion adds to this list w
 
 | Term | Meaning here | Not to be confused with |
 | --- | --- | --- |
-| Turn | One `ask`: one user request (text, or audio from M4), zero or more model and tool rounds, then exactly one final answer or one typed terminal error; identified by a host-generated `turnId`. No history survives between turns | A whole conversation or session |
+| Turn | The agent part of one `ask`: one user text (typed, or the transcription of `--audio`), zero or more model and tool rounds, then exactly one final answer or one typed terminal error; identified by a host-generated `turnId`. No history survives between turns. Transcription and speech run outside the turn and its deadline | A whole conversation or session; the whole `ask` command |
 | Agent iteration | One logical `AgentModel.respond` invocation inside a turn, including the one that returns the answer; `MAX_AGENT_ITERATIONS` is the maximum number per turn. Transport retries inside one invocation do not count | A turn; an HTTP attempt |
-| Transcript | The runner's per-turn, append-only list of canonical items (`user_text`, `model_step`, `tool_result`), sent whole with every model request | Provider-side conversation state |
+| Transcript | The runner's per-turn, append-only list of canonical items (`user_text`, `model_step`, `tool_result`), sent whole with every model request | Provider-side conversation state; a transcription (speech-to-text output) |
 | Model step | One completed model response in canonical form: optional text, tool calls in response order, and a continuation | A provider response object |
 | Continuation | The model adapter's opaque protocol state for one step (for OpenAI, the step's output items), carried to the next request unread, unlogged, and unpersisted | Anything the runner decides with |
 | Accepted step | A model step that passed every runner check (call ids, iteration and tool-call budgets); only its calls may run | A step whose text is shown as the answer |
@@ -27,6 +27,11 @@ CLI output use these words consistently; a design discussion adds to this list w
 | Idempotency key | Required input of every write tool naming one logical operation; owned by the executor's caller — in the agent loop the host, which derives it from the turn, the tool, and the other arguments, never the model. Scope: the whole note store; it lives as long as its note | Exactly-once delivery (never claimed); a transport or tool-call id |
 | Replay | A repeated `create_note` with a used key and the same text: returns the original note with `created: false` and writes nothing | A conflict (same key, different text) |
 | Commit point | The single step after which a write is durable and visible: for notes, the successful hard link of the fsynced temp file to the note's name | Writing the temp file |
+| Transcription | The text speech-to-text returns for an `--audio` file; it becomes the turn's user text unchanged | The runner's transcript |
+| Speech renderer | The Realtime model that speaks the final answer. It receives the answer as data and decides nothing: no tools, no conversation | An assistant or second agent |
+| Spoken text | The renderer's own report of what it spoke, compared word for word with the answer before any audio is saved (the fidelity check) | An independent transcription of the audio |
+| Speech deadline | `SPEECH_TIMEOUT_MS`: one wall-clock budget for one transcription or one rendering, including every attempt, retry wait, and byte received | The turn deadline; the per-attempt provider timeout |
+| Reserved output | The `--speech-out` file, created exclusively before any provider is used and either committed (written, synced, closed) or removed | A file written at the end |
 | Port / adapter | Port: an interface the application owns (`src/ports`). Adapter: its implementation for a provider, protocol, or the OS (`src/adapters`) | A protocol adapter's business logic (there is none) |
 | Note | A short, immutable text record (`id`, `text`, `createdAt`) created by `create_note` and read by `read_note`; one JSON file under `DATA_DIR/notes`, its id derived from its idempotency key | A file path chosen by the model |
 | Dry run | Shows the proposed tool calls and policy decisions without performing side effects (planned with the confirmation policy, M6) | A test run with fakes |

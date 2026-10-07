@@ -40,7 +40,8 @@ The ubiquitous language is [the glossary](glossary.md); names in code use its te
   logging). Do not create ports for in-process logic.
 - No placeholder adapters for providers that are not implemented: the abstraction is proven by the
   test fakes.
-- Ports today: `Clock`, `IdGenerator`, `Logger`, `NoteStore`, and `AgentModel`. `AgentModel` is
+- Ports today: `Clock`, `IdGenerator`, `Logger`, `NoteStore`, `AgentModel`, `SpeechToText`,
+  `TextToSpeech`, and `AudioFiles`. `AgentModel` is
   generic in its opaque continuation type, so a provider can carry its own protocol state through
   the runner without any provider type crossing the port
   ([decision 0009](../decisions/0009-stateless-agent-loop.md)).
@@ -70,7 +71,9 @@ no I/O. Entrypoints never construct an adapter or a tool.
 
 The application holds no optional capabilities: the OpenAI-backed agent is composed separately by
 `src/bootstrap/create-agent.ts`, only for a command that calls the model and only after that command
-has loaded its credentials. `src/bootstrap/composition.ts` bundles both factories; the CLI takes a
+has loaded its credentials. Speech is composed the same way: `create-transcriber.ts` only for
+`ask --audio`, `create-speech-output.ts` only for `--speech-out`. `src/bootstrap/composition.ts`
+bundles these factories; the CLI takes a
 composition as a parameter, so tests supply a fake model there instead of through flags,
 environment switches, or globals. Tests build services with fakes the same way. Shutdown ownership
 (`src/bootstrap/shutdown.ts`, planned M6) lives beside it.

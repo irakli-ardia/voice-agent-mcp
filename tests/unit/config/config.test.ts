@@ -15,7 +15,12 @@ const OPENAI_DEFAULTS = {
   maxRetries: 2,
   maxOutputTokens: 4_096,
   reasoningEffort: "none",
+  sttModel: "gpt-transcribe",
+  ttsModel: "gpt-realtime-2.1-mini",
+  ttsVoice: "marin",
 };
+
+const SPEECH_DEFAULTS = { timeoutMs: 180_000 };
 
 const DEFAULTS = {
   logLevel: "info",
@@ -23,6 +28,7 @@ const DEFAULTS = {
   dataDir: resolve(".data"),
   agent: AGENT_DEFAULTS,
   openai: OPENAI_DEFAULTS,
+  speech: SPEECH_DEFAULTS,
 };
 
 describe("loadConfig", () => {
@@ -178,6 +184,86 @@ describe("loadConfig", () => {
       ok: false,
       issues: [expect.stringMatching(/^OPENAI_REASONING_EFFORT: /)],
     });
+  });
+
+  describe.each([
+    ["OPENAI_STT_MODEL", "sttModel"],
+    ["OPENAI_TTS_MODEL", "ttsModel"],
+  ] as const)("%s", (variable, field) => {
+    it.each(["gpt-transcribe", "gpt-realtime-2.1-mini", "ft:gpt-4.1:org:name:id"])(
+      "accepts the model id %s",
+      (model) => {
+        expect(loadConfig({ [variable]: model })).toEqual({
+          ok: true,
+          config: { ...DEFAULTS, openai: { ...OPENAI_DEFAULTS, [field]: model } },
+        });
+      },
+    );
+
+    it.each(["", "has space", "x".repeat(65), "a&b=c", "sk-proj/secret-model"])(
+      "rejects the model id %j without echoing it",
+      (model) => {
+        const result = loadConfig({ [variable]: model });
+
+        expect(result).toEqual({
+          ok: false,
+          issues: [expect.stringMatching(new RegExp(`^${variable}: `))],
+        });
+        expect(JSON.stringify(result).includes(model)).toBe(model === "");
+      },
+    );
+  });
+
+  it.each([
+    "alloy",
+    "ash",
+    "ballad",
+    "coral",
+    "echo",
+    "sage",
+    "shimmer",
+    "verse",
+    "marin",
+    "cedar",
+  ])("accepts the Realtime voice %s", (voice) => {
+    expect(loadConfig({ OPENAI_TTS_VOICE: voice })).toEqual({
+      ok: true,
+      config: { ...DEFAULTS, openai: { ...OPENAI_DEFAULTS, ttsVoice: voice } },
+    });
+  });
+
+  // `fable`, `onyx`, and `nova` exist only on the deprecated speech endpoint, not on Realtime.
+  it.each(["fable", "onyx", "nova", "Marin", "", "voice_1234", "sk-secret-voice"])(
+    "rejects the voice %j without echoing it",
+    (voice) => {
+      const result = loadConfig({ OPENAI_TTS_VOICE: voice });
+
+      expect(result).toEqual({ ok: false, issues: [expect.stringMatching(/^OPENAI_TTS_VOICE: /)] });
+      expect(JSON.stringify(result).includes(voice)).toBe(voice === "");
+    },
+  );
+
+  it.each(["5000", "600000"])("accepts the speech timeout bound %s", (value) => {
+    expect(loadConfig({ SPEECH_TIMEOUT_MS: value })).toEqual({
+      ok: true,
+      config: { ...DEFAULTS, speech: { timeoutMs: Number(value) } },
+    });
+  });
+
+  it.each(["4999", "600001", "1.5", "-1", "", "many"])(
+    "rejects the speech timeout %j, naming only the variable",
+    (value) => {
+      expect(loadConfig({ SPEECH_TIMEOUT_MS: value })).toEqual({
+        ok: false,
+        issues: [expect.stringMatching(/^SPEECH_TIMEOUT_MS: /)],
+      });
+    },
+  );
+
+  it("does not echo a rejected speech timeout", () => {
+    expect(JSON.stringify(loadConfig({ SPEECH_TIMEOUT_MS: "sk-secret-timeout" }))).not.toContain(
+      "sk-secret-timeout",
+    );
   });
 
   it("never reads or requires OPENAI_API_KEY", () => {

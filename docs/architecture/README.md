@@ -56,6 +56,9 @@ entrypoint (CLI or MCP stdio) → composition root → app service (agent runner
 - **Entrypoint** — `src/entrypoints/cli.ts` (`ask`, `tools`; `doctor` in M6) or `mcp-stdio.ts`
   (M5): parses and validates input, owns the root `AbortController` (aborted on the first SIGINT),
   maps outcomes to exit codes or protocol responses.
+- **Speech stages** (M4) — for `ask --audio` and `--speech-out`, the CLI runs the transcription
+  service before the turn and the speech output service after it
+  ([audio pipeline](audio-pipeline.md)); the turn itself is unchanged.
 - **Composition root** — `src/bootstrap/create-application.ts` builds the canonical tools and
   executor once per process; `src/bootstrap/create-agent.ts` adds the OpenAI-backed agent only for
   a command that calls the model, after it has loaded its credentials
@@ -81,9 +84,10 @@ reason; there are none.
   `OPENAI_API_KEY` is the exception: `src/config/openai-credentials.ts` reads it only for `ask`, so
   `--help` and `tools` work without it, and `ask` exits 78 when it is missing. `.env.example` lists
   every variable.
-- Runtime data (notes, generated audio) lives under the application-owned `DATA_DIR`
+- Runtime data (notes) lives under the application-owned `DATA_DIR`
   (`.data/` by default, git-ignored), resolved to an absolute path against the working directory
-  at startup. It must be on a local filesystem with hard links
+  at startup. Audio is never stored there: `--audio` reads and `--speech-out` creates only files
+  the CLI user names ([audio pipeline](audio-pipeline.md)). It must be on a local filesystem with hard links
   ([filesystem safety](security.md#filesystem-safety)); a host that spawns the process from an
   unknown working directory (an MCP host, M5) should set it to an absolute path.
 
@@ -104,7 +108,7 @@ validation schema for OpenAI, and placeholder adapters for providers that are no
 | [MCP](mcp.md) | The MCP server, its registration, stdio handling |
 | [Security](security.md) | Risk policy, confirmation, limits, filesystem access, secrets, retries |
 | [Observability](observability.md) | Log events, correlation fields, timings |
-| [Invariants](invariants.md) | Anything — the 33 repository invariants and where each is enforced |
+| [Invariants](invariants.md) | Anything — the 36 repository invariants and where each is enforced |
 | [Glossary](glossary.md) | Naming — the terms code and docs use exactly |
 
 Why the big choices were made: [decisions](../decisions/README.md).

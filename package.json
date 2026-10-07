@@ -1,7 +1,7 @@
 {
   "name": "voice-agent-mcp",
   "version": "0.1.0",
-  "description": "Voice-driven OpenAI tool-calling agent whose tools are defined once and also served over MCP.",
+  "description": "Voice-driven OpenAI tool-calling agent: canonical typed tools, speech in and out, MCP server planned.",
   "license": "MIT",
   "author": "Irakli Ardia",
   "private": true,

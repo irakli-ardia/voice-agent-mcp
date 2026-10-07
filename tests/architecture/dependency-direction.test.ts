@@ -96,6 +96,7 @@ describe("dependency direction", () => {
 
     expect(importers.filter((path) => !path.startsWith("src/adapters/persistence/"))).toEqual([]);
     expect(importers).toContain("src/adapters/persistence/file-note-store.ts");
+    expect(importers).toContain("src/adapters/persistence/local-audio-files.ts");
   });
 
   it("lets only the OpenAI adapter import the openai package", () => {
@@ -106,6 +107,14 @@ describe("dependency direction", () => {
     );
 
     expect(importers.filter((path) => !path.startsWith("src/adapters/openai/"))).toEqual([]);
+  });
+
+  it("lets only the Realtime speech renderer use the platform WebSocket", () => {
+    const users = readTypeScriptFiles("src")
+      .filter((file) => /\bWebSocket\b/.test(file.text))
+      .map((file) => file.path);
+
+    expect(users).toEqual(["src/adapters/openai/realtime-text-to-speech.ts"]);
   });
 
   it("reads process.env only in src/config", () => {

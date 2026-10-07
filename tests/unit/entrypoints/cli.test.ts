@@ -67,11 +67,21 @@ const WITH_KEY = { ...QUIET, OPENAI_API_KEY: API_KEY };
 
 interface CountingComposition extends Composition {
   readonly agentsCreated: () => number;
+  /** Transcribers and speech outputs composed; a text-only ask must compose neither. */
+  readonly speechCreated: () => number;
+}
+
+/** A speech factory a text-only command must never reach. */
+function unexpectedSpeech(counter: { value: number }): never {
+  counter.value += 1;
+
+  throw new Error("a text-only ask composed speech");
 }
 
 /** The real application, with a scripted model behind `createAgent`: no OpenAI, no network. */
 function fakeComposition(replies: readonly FakeReply[]): CountingComposition {
   let agentsCreated = 0;
+  const speech = { value: 0 };
 
   return {
     createApplication,
@@ -88,7 +98,10 @@ function fakeComposition(replies: readonly FakeReply[]): CountingComposition {
         limits: application.config.agent,
       });
     },
+    createTranscriber: () => unexpectedSpeech(speech),
+    createSpeechOutput: () => unexpectedSpeech(speech),
     agentsCreated: () => agentsCreated,
+    speechCreated: () => speech.value,
   };
 }
 
@@ -184,6 +197,17 @@ describe("runCli", () => {
     expect(await runCli(["tools"], captured.io)).toBe(EXIT_CONFIG);
     expect(captured.stderr()).toContain("AGENT_TURN_TIMEOUT_MS");
     expect(captured.stdout()).toBe("");
+  });
+});
+
+describe("runCli ask: text only composes no speech", () => {
+  it("answers --text without composing a transcriber or a speech output", async () => {
+    const composition = fakeComposition([step("Hi there.")]);
+    const captured = captureIo(WITH_KEY);
+
+    expect(await runCli(["ask", "--text", "Hello?"], captured.io, composition)).toBe(EXIT_OK);
+    expect(captured.stdout()).toBe("Hi there.\n");
+    expect(composition.speechCreated()).toBe(0);
   });
 });
 
@@ -323,12 +347,20 @@ describe("runCli ask: credentials and usage", () => {
   });
 
   it.each<[string, readonly string[], string | null]>([
-    ["no --text", ["ask"], "ask needs --text"],
+    ["no input", ["ask"], "ask needs --text"],
     ["empty text", ["ask", "--text", ""], "--text must not be blank"],
     ["blank text", ["ask", "--text", " \n\t "], "--text must not be blank"],
-    ["repeated --text", ["ask", "--text", "a", "--text", "b"], "--text may be given once"],
+    [
+      "repeated --text",
+      ["ask", "--text", "a", "--text", "b"],
+      "--text, --audio, and --speech-out may each be given once",
+    ],
     ["text over the limit", ["ask", "--text", "123456"], "--text is longer than"],
-    ["--text with tools", ["tools", "--text", "a"], "--text is only valid with ask"],
+    [
+      "--text with tools",
+      ["tools", "--text", "a"],
+      "--text, --audio, and --speech-out are only valid with ask",
+    ],
     ["--text without a command", ["--text", "a"], null],
     ["an extra argument", ["ask", "--text", "a", "extra"], null],
   ])("exits 64 for %s before any key check or model work", async (_case, argv, reason) => {
@@ -377,6 +409,8 @@ function recordingComposition(replies: readonly FakeReply[], logger: RecordingLo
         logger: application.logger,
         limits: application.config.agent,
       }),
+    createTranscriber: () => unexpectedSpeech({ value: 0 }),
+    createSpeechOutput: () => unexpectedSpeech({ value: 0 }),
   };
 }
 

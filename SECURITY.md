@@ -22,8 +22,9 @@ acknowledgement, and the fix will be credited in the advisory unless you prefer 
 
 ## Scope
 
-In scope: the CLI, the MCP stdio server, tool execution and its policy, configuration, logging, and
-file-backed notes in the application data directory. Out of scope: the security of OpenAI's
+In scope: the CLI (including audio input and speech output files), tool execution and its policy,
+configuration, logging, and file-backed notes in the application data directory; the MCP stdio
+server once it ships (planned). Out of scope: the security of OpenAI's
 service, MCP host applications, and the machine the tool runs on. The local stdio MCP transport has
 no authentication by design: the host process is the trust boundary. Trust boundaries and threats
 are described in [docs/architecture/security.md](docs/architecture/security.md) (threat

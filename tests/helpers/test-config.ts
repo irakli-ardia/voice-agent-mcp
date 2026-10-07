@@ -17,7 +17,11 @@ export function testConfig(overrides: Partial<Config> & Pick<Config, "dataDir">)
       maxRetries: 2,
       maxOutputTokens: 4_096,
       reasoningEffort: "none",
+      sttModel: "gpt-transcribe",
+      ttsModel: "gpt-realtime-2.1-mini",
+      ttsVoice: "marin",
     },
+    speech: { timeoutMs: 180_000 },
     ...overrides,
   };
 }

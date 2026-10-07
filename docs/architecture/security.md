@@ -76,9 +76,71 @@ absolute path once at startup.
   static message.
 
 Residual risk: there is no note-count or disk quota yet (M6). Each record is under 13 KB, but the
-number of notes is unbounded across turns and over MCP. A full disk makes every create fail with
+number of notes is unbounded across turns (and, from M5, over MCP). A full disk makes every create fail with
 `storage_unavailable`, while reads keep working, and affects anything else under `DATA_DIR`.
 Crashed writes can leave `.tmp-*` files behind; they are never read as notes.
+
+## Audio input
+
+`ask --audio <file>` reads a file the CLI user named; the model and tool calls never choose a path.
+
+- **Judged by the open file, not the path:** the file is opened read-only (non-blocking on POSIX,
+  so a FIFO cannot stall the open), and the open handle must be a regular file. Directories,
+  devices (`/dev/zero`, `\\.\NUL`), FIFOs, and sockets are refused. Symlinks are followed: the path
+  is the user's own.
+- **Bounded:** at most 8 MiB, read in chunks, never more than the limit plus one byte, even if the
+  file grows or reports a wrong size. The handle is closed on every path.
+- **Checked before upload:** the bytes must start like WAV, MP3, MP4/M4A, or WebM audio; anything
+  else (a `.env`, a document, a renamed file) fails `audio_unsupported` and is never sent. The upload
+  is named `audio.<format>`; the user's file name and path never leave the machine. Embedded
+  metadata in an accepted file (ID3 tags, MP4 atoms) is sent as is.
+- **Not guaranteed:** a duration limit. There is no local decoder, so a highly compressed 8 MiB file
+  can hold hours of audio, billed by the minute.
+
+## Speech files
+
+`--speech-out <file.wav>` names a file the CLI user wants created.
+
+- **Reserved before any spend:** the file is created exclusively (`wx`) before transcription, the
+  agent turn, or speech, so an existing name fails `speech_output_exists` before anything is paid
+  for. It is never overwritten. Parent directories are never created. The name must end in `.wav`
+  and must not contain `:` (a Windows alternate data stream).
+- **Symlinks:** any existing entry at the path, including a dangling symlink, is refused first.
+  This matters on Windows, where an exclusive create follows a dangling symlink and creates its
+  target (POSIX `O_EXCL` does not). A symlink created in the instant between that check and the
+  create is caught by the next point.
+- **Ownership:** after creating the file the adapter records its identity (device and inode) and
+  proves the path names that very file; a regular file is required (Windows device names are
+  refused). It removes a file only if the path still names that identity, never merely because
+  something exists at the name.
+- **Commit point:** write all bytes, fsync, close. A failed write, fsync, or close is never reported
+  as saved. Before the commit point any failure or cancellation removes the file; after it, the
+  file stands.
+- **Permissions:** created `0o600` on POSIX; Windows applies the parent directory's ACLs.
+- **Residual risks:**
+  - Between the final identity check and the unlink there is a short window in which another local
+    process with write access to that directory could swap in a different file, which would then be
+    removed. No portable Node API closes it.
+  - The file is visible (empty, then growing) while the speech is produced, and a hard kill (a
+    second Ctrl+C, a crash) can leave an empty or partial file. Surviving an OS crash or power loss
+    is not guaranteed for the directory entry.
+
+## The speech renderer
+
+The Realtime model that speaks the answer is treated as untrusted output, like any provider.
+
+- It receives the final answer as JSON data with fixed instructions, no tools, and audio-only
+  output. Answer text that looks like instructions ("ignore all previous instructions...") stays
+  data.
+- Every server event it sends is validated; anything that is not exactly one assistant audio
+  message for the one requested response (a tool call, text output, a second response, malformed
+  audio) fails the rendering.
+- Its report of what it spoke must match the answer word for word (no fuzzy or semantic matching);
+  otherwise `synthesis_unfaithful` and nothing is saved. That transcript is the provider's own
+  report, not an independent recognition of the audio: live verification also transcribed the
+  rendered audio, but the product check relies on the provider's report.
+- The answer is already on stdout when speech starts; a speech failure never hides or changes it
+  ([audio pipeline](audio-pipeline.md)).
 
 ## Denial and cost controls
 
@@ -89,7 +151,10 @@ output tokens per model invocation, and bounded retries (at most `OPENAI_MAX_RET
 over 10 s refused) ([agent loop](agent-loop.md#loop-protection)). Tool calls run one at a time, so
 no concurrency bound is needed. `MAX_TOOL_RESULT_BYTES` caps the serialised result that leaves the
 tool executor; it does not limit a handler's memory or CPU
-([tool system](tool-system.md#result-size-cap)). Planned with M4: audio size and TTS text limits.
+([tool system](tool-system.md#result-size-cap)). Speech: audio input at most 8 MiB, spoken answers
+at most 800 characters, a speech deadline per transcription and per rendering
+(`SPEECH_TIMEOUT_MS`), at most 9 600 000 PCM bytes and 4096 output tokens per rendering, and no
+retry once a rendering was requested.
 
 ## Secrets and logging privacy
 
@@ -98,7 +163,8 @@ placeholders only). `OPENAI_API_KEY` is read only by the command that calls Open
 kept in the application config, and never echoed: a missing key is reported by name. Provider error
 bodies and messages never leave the OpenAI adapter; it logs an HTTP status and a sanitised error
 code. Nothing logs user text, assistant text, tool arguments or results, note text, idempotency
-keys, the provider continuation (including encrypted reasoning), raw audio, or secrets; the logger
+keys, the provider continuation (including encrypted reasoning), file paths, transcriptions, spoken
+text, audio bytes, Realtime event payloads, or secrets; the logger
 also redacts known secret fields (`src/adapters/logging/pino-logger.ts`)
 ([observability](observability.md)).
 
@@ -109,7 +175,8 @@ Requests are stateless with `store: false`
 store response state at the provider for later retrieval; it is not, by itself, zero data retention
 — the provider's own retention policies still apply. Each request contains the turn's user text,
 tool arguments and results (which can include note text), and the encrypted reasoning items the
-provider returned.
+provider returned. With speech, the audio file (including any embedded metadata) goes to the
+transcription endpoint, and the final answer goes to the Realtime API to be spoken.
 
 The OpenAI client is built with every environment-backed option set explicitly
 (`src/adapters/openai/openai-client.ts`): the API key, a fixed `https://api.openai.com/v1` base URL,
@@ -118,7 +185,10 @@ The OpenAI client is built with every environment-backed option set explicitly
 `OPENAI_WEBHOOK_SECRET`, and `OPENAI_LOG` in the environment have no effect. Known residual: the SDK
 merges headers from `OPENAI_CUSTOM_HEADERS` into every request, and no supported option turns that
 off; whoever controls the process environment can add headers to the application's OpenAI
-requests (but cannot redirect them or read the responses through this).
+requests (but cannot redirect them or read the responses through this). The speech renderer does
+not use the SDK client: it opens `wss://api.openai.com/v1/realtime` itself with the key in an
+`Authorization` header (never in the URL or a WebSocket subprotocol), so that residual does not
+apply to it.
 
 ## Dependency security
 

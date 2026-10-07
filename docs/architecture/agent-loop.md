@@ -1,8 +1,9 @@
 # Agent loop
 
 The bounded, stateless OpenAI Responses API loop that turns one user text into tool calls and a
-final answer, and the rules for every model call. Status: built (M3) for text input; audio arrives
-in M4 ([audio pipeline](audio-pipeline.md)). Why it is stateless:
+final answer, and the rules for every model call. Status: built (M3). Audio input is transcribed
+before the turn and speech is produced after it (M4); the loop itself only ever sees text
+([audio pipeline](audio-pipeline.md)). Why it is stateless:
 [decision 0009](../decisions/0009-stateless-agent-loop.md).
 
 ## Pieces

@@ -1,10 +1,15 @@
 import { APIConnectionError, APIError } from "openai";
-import type { ModelFailureCode } from "../../ports/agent-model.js";
 import type { AttemptOutcome } from "./retry-policy.js";
+
+/**
+ * How a failed OpenAI request is classified, for every endpoint. Each adapter maps these onto its
+ * own port's failure codes.
+ */
+export type OpenAiFailureCode = "unavailable" | "rejected" | "context_too_large" | "protocol_error";
 
 /** What a failed request may contribute to a log event: a status and a sanitised code, no text. */
 export interface OpenAiFailure {
-  readonly code: ModelFailureCode;
+  readonly code: OpenAiFailureCode;
   readonly httpStatus: number | null;
   readonly providerCode: string | null;
 }
@@ -28,9 +33,9 @@ function retryAfterMs(headers: Headers | undefined): number | undefined {
 /** Request timeout, lock conflict, and rate limit; every 5xx is transient too. */
 const TRANSIENT_STATUSES: ReadonlySet<number> = new Set([408, 409, 429]);
 
-/** A model failure for an HTTP status; `transient` failures are retried. */
+/** A failure for an HTTP status; `transient` failures are retried. */
 interface StatusFailure {
-  readonly code: ModelFailureCode;
+  readonly code: OpenAiFailureCode;
   readonly transient: boolean;
 }
 
@@ -92,4 +97,23 @@ export function classifyOpenAiError(
   }
 
   return { retry: false, value: { code: "protocol_error", httpStatus: null, providerCode: null } };
+}
+
+/**
+ * The outcome of an attempt whose request threw: classified as above (so it rethrows when `signal`
+ * aborted), with the failure wrapped as the calling adapter's own attempt value.
+ */
+export function failedAttempt<T>(
+  cause: unknown,
+  signal: AbortSignal,
+  wrap: (failure: OpenAiFailure) => T,
+): AttemptOutcome<T> {
+  const outcome = classifyOpenAiError(
+    cause instanceof Error ? cause : new Error("non-error thrown"),
+    signal,
+  );
+
+  const value = wrap(outcome.value);
+
+  return outcome.retry ? { ...outcome, value } : { retry: false, value };
 }

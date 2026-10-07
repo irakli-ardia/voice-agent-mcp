@@ -14,6 +14,7 @@ is never edited to change its outcome; a later record supersedes it and both lin
 | [0007](0007-no-orchestration-framework.md) | No orchestration framework for the agent loop | accepted |
 | [0008](0008-idempotent-note-creation.md) | Idempotent note creation: required key, key-derived id, hard-link publication | accepted |
 | [0009](0009-stateless-agent-loop.md) | Stateless agent loop: application-owned transcript, opaque continuation | accepted |
+| [0010](0010-speech-pipeline-around-the-text-agent.md) | Speech pipeline around the text agent, with a Realtime renderer | accepted |
 
 ## Template
 
