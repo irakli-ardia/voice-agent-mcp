@@ -42,7 +42,7 @@
   "devDependencies": {
     "@biomejs/biome": "2.5.15",
     "@oxlint/plugins": "1.87.0",
-    "@types/node": "24.19.1",
+    "@types/node": "26.6.4",
     "@vitest/coverage-v8": "5.0.3",
     "fallow": "3.31.0",
     "oxlint": "1.87.0",
