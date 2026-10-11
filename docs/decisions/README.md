@@ -15,6 +15,8 @@ is never edited to change its outcome; a later record supersedes it and both lin
 | [0008](0008-idempotent-note-creation.md) | Idempotent note creation: required key, key-derived id, hard-link publication | accepted |
 | [0009](0009-stateless-agent-loop.md) | Stateless agent loop: application-owned transcript, opaque continuation | accepted |
 | [0010](0010-speech-pipeline-around-the-text-agent.md) | Speech pipeline around the text agent, with a Realtime renderer | accepted |
+| [0011](0011-mcp-server-on-the-low-level-sdk-api.md) | MCP server on the SDK's low-level API, caller-owned keys, dual-era stdio | accepted |
+| [0012](0012-thrown-values-are-never-logged.md) | A thrown value is never logged, only its class | accepted |
 
 ## Template
 

@@ -7,6 +7,7 @@ Commands:
   ask --text <text>    Answer one request, calling tools when needed
   ask --audio <file>   Transcribe a WAV, MP3, MP4/M4A, or WebM file (up to 8 MiB), then answer it
   tools                List the tools the agent can call
+  mcp                  Serve the tools to an MCP client over stdio (started by the client, not by hand)
 
 Options:
   --speech-out <file.wav>  With ask: also save the answer as speech in a new WAV file (never
@@ -14,7 +15,7 @@ Options:
                            human voice; tell listeners so.
   -h, --help               Show this help
 
-ask needs OPENAI_API_KEY.
+ask needs OPENAI_API_KEY; tools and mcp do not.
 `;
 
 /** A usage problem; also the logged value, so it never contains user input. */

@@ -1,6 +1,11 @@
 {
   "$schema": "https://raw.githubusercontent.com/fallow-rs/fallow/main/schema.json",
-  "entry": ["scripts/**/*.mjs", "src/entrypoints/voice-agent.ts"],
+  "entry": [
+    "scripts/**/*.mjs",
+    "src/entrypoints/voice-agent.ts",
+    "tests/helpers/mcp-gated-write-server.mjs",
+    "tests/e2e/mcp-dist/require-fresh-build.ts"
+  ],
   "ignorePatterns": ["tools/oxlint/anti-slop/**"],
   "ignoreDependencies": ["@oxlint/plugins"],
   "health": {

@@ -32,6 +32,9 @@ CLI output use these words consistently; a design discussion adds to this list w
 | Spoken text | The renderer's own report of what it spoke, compared word for word with the answer before any audio is saved (the fidelity check) | An independent transcription of the audio |
 | Speech deadline | `SPEECH_TIMEOUT_MS`: one wall-clock budget for one transcription or one rendering, including every attempt, retry wait, and byte received | The turn deadline; the per-attempt provider timeout |
 | Reserved output | The `--speech-out` file, created exclusively before any provider is used and either committed (written, synced, closed) or removed | A file written at the end |
+| MCP era | One of the two protocol generations the server speaks: modern (2026-07-28, no `initialize`, per-request metadata) or legacy (2025-11-25, `initialize` handshake); the server serves both | A tool or API version |
+| Tool descriptor | The MCP form of a tool definition (name, description, input and output JSON Schema, annotation hints), projected from it once at startup | A second tool definition |
+| In-flight limit | `MCP_MAX_IN_FLIGHT_CALLS`: how many MCP tool calls may be executing at once; the next is refused with `server_busy` before any handler runs | Request-rate limiting; a limit on handlers still running after a cancellation or timeout |
 | Port / adapter | Port: an interface the application owns (`src/ports`). Adapter: its implementation for a provider, protocol, or the OS (`src/adapters`) | A protocol adapter's business logic (there is none) |
 | Note | A short, immutable text record (`id`, `text`, `createdAt`) created by `create_note` and read by `read_note`; one JSON file under `DATA_DIR/notes`, its id derived from its idempotency key | A file path chosen by the model |
 | Dry run | Shows the proposed tool calls and policy decisions without performing side effects (planned with the confirmation policy, M6) | A test run with fakes |

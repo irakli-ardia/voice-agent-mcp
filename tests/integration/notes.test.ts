@@ -165,7 +165,7 @@ describe("notes on the real file store: retry after timed_out", () => {
 
     // Its link loses with EEXIST; reading the winner with its already-aborted signal is an abort.
     expect(await settledLate).toEqual(
-      expect.objectContaining({ lateOutcome: "threw", errorName: "AbortError" }),
+      expect.objectContaining({ lateOutcome: "threw", errorClass: "AbortError" }),
     );
     expect(await noteFiles()).toHaveLength(1);
   });

@@ -1,30 +1,192 @@
 # MCP
 
-The same canonical tools served over the Model Context Protocol. Status: planned (M5).
+The same canonical tools, served over the Model Context Protocol on stdio by `voice-agent mcp`.
+Status: built (M5). The server shares the tool registry and the tool executor with the agent
+([tool system](tool-system.md)); it defines no tool and implements no handler of its own.
 
-## v1 transport: stdio
+## Shape
 
-Ideal for local Claude/MCP hosts, smallest attack surface, no HTTP or auth. Streamable HTTP is a
-documented future extension, not built unless implementation quality stays high.
+```
+MCP client ⇄ stdio ⇄ serveStdio (SDK) → createMcpServer → tool executor → handler → port → adapter
+                                         │
+                                         └ tools/list ← descriptors projected from the registry
+```
 
-## Rules
+| Piece | File | Responsibility |
+| --- | --- | --- |
+| Entrypoint | `src/entrypoints/mcp-stdio.ts` | Arguments, configuration, stop signals, exit codes, releasing stdin. Never exits the process itself. |
+| Composition | `src/bootstrap/serve-mcp.ts` | SDK `serveStdio` over the SDK's stdio transport with the 1 MiB inbound limit; builds one `Server` per connection over the one shared application; reports how the connection ended. |
+| Server | `src/adapters/mcp/create-mcp-server.ts` | The SDK's low-level `Server`: `tools/list` and `tools/call` handlers, the call id, the in-flight limit. |
+| Descriptors | `src/adapters/mcp/mcp-tool-descriptors.ts` | Canonical tool definitions → MCP tool descriptors. |
+| Result mapping | `src/adapters/mcp/mcp-result-mapper.ts` | Executor result → MCP result or protocol error. |
 
-- Official `@modelcontextprotocol/server` v2. Read the installed package's docs and types before
-  writing against it.
-- One server factory (`src/adapters/mcp/create-mcp-server.ts`).
-- Tool registration is generated from the canonical registry (`register-mcp-tools.ts`), using the
-  Zod schemas directly where the SDK supports it.
-- Execution is delegated to the canonical executor; results map to MCP typed content
-  (`mcp-result-mapper.ts`); failures are represented as MCP tool errors with safe messages.
-- No business logic in registration or mapping code; no MCP types in tool handlers.
-- **stdout is protocol traffic.** Logs go to stderr only (the pino adapter's default).
-- Graceful shutdown with clear lifecycle ownership; no orphaned process or hanging promise.
-- Server-side risk metadata and policy hooks are preserved even when the client provides its own
-  confirmation UX.
+MCP SDK imports are confined to `src/adapters/mcp/` and `src/bootstrap/serve-mcp.ts`; no MCP type
+exists in `domain`, `ports`, `app`, or `tools`. The adapter takes the executor as a parameter,
+builds none, imports no tool, and never reaches a handler except through the executor (architecture
+tests enforce each of these). The entrypoint's import graph reaches no OpenAI, agent, or speech
+module, so the server needs no API key and loads no provider.
+
+## Why the low-level `Server`
+
+The SDK also offers `McpServer.registerTool`. It validates input itself, with its own error wording,
+and forwards the message of anything a handler throws. Either would bypass the executor's safe
+messages. The low-level `Server` hands the raw arguments to the executor, which owns validation,
+policy, timeouts, output validation, the byte cap, and logging
+([decision 0011](../decisions/0011-mcp-server-on-the-low-level-sdk-api.md)).
+
+## Protocol
+
+Built on the official `@modelcontextprotocol/server` 2.3.1. `serveStdio` serves both eras from one
+process, chosen by how the client opens:
+
+- **2026-07-28 (modern):** no `initialize`; every request carries its protocol version and
+  capabilities in `_meta`; `server/discover` is answered.
+- **2025-11-25 (legacy):** the `initialize` handshake.
+
+The server declares only the `tools` capability (no `listChanged`, resources, prompts, or logging).
+It was exercised with the official SDK client in both eras and with raw JSON-RPC lines. Other MCP
+hosts speak the same stdio protocol, but none has been tested here.
+
+## Discovery
+
+`tools/list` returns one descriptor per registered tool, in registry order, built once at startup
+from the canonical definition:
+
+- `inputSchema` and `outputSchema` are Zod's own JSON Schema (2020-12; the redundant `$schema`
+  keyword is dropped). Nothing is hand-written, and nothing is removed: `create_note` shows its
+  required `idempotencyKey`.
+- An output schema must have an object root, otherwise the SDK would wrap `structuredContent` for
+  2025-era clients and it could no longer match the validated result. A schema that cannot be
+  expressed as JSON Schema fails at startup.
+- Annotations are derived from `risk` and `idempotency` only, and are hints a client must not
+  trust: `readOnlyHint` for `read`; `destructiveHint` false only for `write`; `idempotentHint` true
+  only for `idempotency: "key"`; `openWorldHint` true only for `external`. Read tools carry only
+  `readOnlyHint` and `openWorldHint`, because the spec makes the others meaningful only for tools
+  that are not read-only.
+
+## Calls
+
+```
+tools/call → in-flight check → executor({ id: "mcp:<uuid>", name, arguments ?? {} }, request signal)
+           → map the result → client
+```
+
+- The tool name and arguments are untrusted and passed to the executor unchanged. The call id is
+  generated by the host (`mcp:` plus a UUID), never taken from the request; the JSON-RPC id is not
+  logged.
+- **Success:** `structuredContent` is the validated result object, and `content` is one text block
+  holding `JSON.stringify` of that same object, so the two cannot disagree. Each is within
+  `MAX_TOOL_RESULT_BYTES`, so a response can carry up to about twice that.
+- **Tool failures** are results with `isError: true` and the text `<code>: <message>`: `invalid_input`,
+  `confirmation_required`, `cancelled`, `timed_out`, `execution_failed`, `internal_error`,
+  `invalid_output`, `output_too_large`. The message is the executor's fixed or bounded text, never an
+  argument, an output, or a thrown message.
+- **Protocol errors:** an unknown tool is JSON-RPC -32602 with the static message `No tool with this
+  name exists.` (the requested name is not echoed), as the spec classes it. Anything unexpected
+  inside the handler becomes a static -32603 `Internal error`. The SDK would otherwise send a thrown
+  error's own message to the client, so the handler throws only those two static errors.
+- **Confirmation:** a tool that requires it is refused with `confirmation_required`, as in the CLI.
+  No current tool requires it, and there is no interactive confirmation over MCP yet (M6).
+
+## Idempotency
+
+The key belongs to the caller. `create_note` requires `idempotencyKey` (16–64 characters of
+`A-Z a-z 0-9 - _`), exposed unchanged in the schema; the adapter never generates, derives, rewrites,
+or strips it. A repeated key with the same text replays the note (`created: false`); with different
+text it fails with `idempotency_key_conflict`; a missing or malformed key is `invalid_input` and the
+store is never reached ([decision 0008](../decisions/0008-idempotent-note-creation.md)). The protocol
+offers nothing to derive a key from: request ids change on retry and the protocol keeps no session.
+A client whose model invents a new key for each retry creates a second note: the guarantee is at
+most one note per key.
+
+## Cancellation and unknown outcomes
+
+A `notifications/cancelled` for a request aborts that request's signal, which is passed straight to
+the executor; closing stdin does the same for every request in flight. The executor stops waiting
+and the SDK sends no response for a cancelled request. **Cancellation does not stop or undo the
+operation.** A handler that ignores its signal, such as a write past its commit point, may still
+complete, and the outcome is unknown to the client. The executor logs `tool.settled_late` when that
+happens. The safe recovery is to retry with the same idempotency key, which replays the committed
+note instead of writing again. Nothing in the server claims that a cancelled write was rolled back.
+
+Cancelling one request does not affect another.
+
+## Concurrency and limits
+
+Calls run concurrently; there is no server-wide lock.
+
+| Bound | Value | What it bounds |
+| --- | --- | --- |
+| `MCP_MAX_IN_FLIGHT_CALLS` | 1–128, default 16 | MCP requests being executed at once. The next call is refused with `server_busy` (a tool failure) before the executor is reached, so no handler runs and no idempotency key is consumed. |
+| Inbound message | 1 MiB, fixed | One JSON-RPC message. A larger one ends the connection and the process (exit 1). |
+| `MAX_TOOL_RESULT_BYTES` | default 16384 | The JSON of one successful result, in UTF-8 bytes. |
+| Tool timeouts | per tool | How long the executor waits. |
+
+What these do **not** bound, stated plainly:
+
+- The in-flight limit counts requests the executor is waiting on. A handler that outlives a
+  cancellation or a timeout no longer holds a slot, so more handlers can be running than the limit.
+- It is a concurrency cap, not request-rate limiting; a client can still send a high rate of calls
+  that are quickly refused or completed.
+- Two in-flight requests that reuse one JSON-RPC id (a client error the spec forbids) both run and
+  are answered under the same id, and a cancellation for that id reaches only the later one. The SDK
+  offers no safe way to reject the duplicate.
+
+## stdio and the process
+
+- **stdout carries MCP messages only.** Logs go to stderr as JSON lines (`LOG_LEVEL`). No banner or
+  help text is ever written to stdout by the server (starting it through `npm run` or `npm start`
+  adds npm's own banner, so clients should run `node` directly or use `npm --silent`), and `console` is not used in `src`; an architecture test and
+  a real-process test enforce both. A line the SDK cannot parse, or a request whose envelope is invalid (for example a malformed `_meta`), is dropped with no JSON-RPC response and reported as the fixed event `mcp.transport_error`; the client must time out on its own, and the server keeps serving.
+- **Lifecycle:** the server runs until stdin ends. Stdin EOF is a normal end (exit 0), and the process
+  then leaves once any write it already started has finished. `SIGINT` and `SIGTERM` close the
+  connection, abort in-flight calls, and exit 130 or 143. On Windows a host that stops a server
+  by killing the process gives it no signal to handle, so closing stdin is the graceful stop that
+  works on every platform.
+- **Transport failure:** an oversized message, or any transport error that closes the connection,
+  logs the fixed events `mcp.transport_error` and `mcp.stopped` and exits 1, never 0. Stdin is
+  released at the end, so the process does not hang.
+- **Exit codes:** 0 stdin closed · 1 transport failure · 64 extra arguments · 70 unexpected failure
+  (class only on stderr) · 78 invalid configuration · 130 SIGINT · 143 SIGTERM.
+
+## Logging and privacy
+
+The executor logs one outcome event per call (`tool.completed`, `tool.failed`), plus
+`tool.settled_late`, with the call id `mcp:<uuid>`, tool name, risk, outcome, and duration
+([observability](observability.md)). A thrown value is logged as a class from a fixed allowlist,
+never its message, stack, cause, or name; arguments, results, note text, idempotency keys, paths, and
+JSON-RPC ids are never logged. The transport's own events carry no SDK message
+([decision 0012](../decisions/0012-thrown-values-are-never-logged.md)).
+
+## Tested clients
+
+Checked against the built server (`node dist/entrypoints/voice-agent.js mcp`) on 2026-10-11, Windows, Node 22.22.3, an isolated `DATA_DIR`:
+
+| Client | Protocol observed | Result |
+| --- | --- | --- |
+| MCP Inspector CLI 2.10.1 (`--cli`) | 2025-11-25 (`initialize`) | Discovery, schemas, all four tools, `create_note` replay and key conflict, invalid input, unknown tool; clean exit 0 |
+| Claude Code 2.1.296 (`--mcp-config` with `--strict-mcp-config`) | 2026-07-28 (`server/discover`) | Connected, listed the four tools, ran all of them through a model, replay, key conflict, invalid input; clean exit 0 |
+
+Not exercised through these clients: cancellation (the one-shot Inspector CLI cannot send it; Claude Code
+did not cancel), the Inspector web UI, and Claude Desktop or any other host. Cancellation is covered by
+the in-process and real-process tests only. Do not read this table as support for other hosts.
+
+## Not built
+
+Streamable HTTP and authentication (the host process is the trust boundary for stdio), resources,
+prompts, logging notifications, list-changed notifications, progress, confirmation over MCP, and
+request-rate limiting. Hardening beyond this is M6 ([security](security.md#mcp-server)).
 
 ## Verification
 
-- MCP tests create the server programmatically (in-memory transport if the SDK supports it,
-  otherwise a controlled stdio test): tools discoverable, schemas correct, valid call succeeds,
-  invalid input rejected, expected failure mapped.
-- Manual: the official MCP Inspector and at least one documented host configuration.
+- **In process:** the server and the real SDK client over an in-memory transport
+  (`tests/integration/mcp-server*.test.ts`, `mcp-idempotency`, `mcp-cancellation-side-effects`,
+  `mcp-privacy`, `mcp-result-bounds`, `mcp-resource-bounds`), and the composition and entrypoint on
+  plain streams (`tests/unit/bootstrap/serve-mcp.test.ts`, `tests/unit/entrypoints/mcp-stdio.test.ts`).
+- **Real processes from source:** `tests/integration/mcp-stdio-*.test.ts` start `voice-agent mcp`
+  through `tsx`.
+- **The built distribution:** `npm run test:mcp-dist` builds, then runs `node dist/entrypoints/voice-agent.js mcp`
+  as child processes with plain `node` (`tests/e2e/mcp-dist/`): both protocol eras, the official client,
+  stdout purity, stderr privacy, idempotency, cancellation, stdin EOF during a write, oversized and
+  malformed input, configuration errors, exit codes, and the in-flight limit. It runs in every CI job
+  ([testing](../testing.md#the-mcp-server)).

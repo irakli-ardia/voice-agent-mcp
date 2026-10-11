@@ -5,7 +5,8 @@ file below holds the detailed, normative rules for one area.
 
 ## Shape
 
-One npm package with two entrypoints: a CLI (`voice-agent`) and, from M5, an MCP stdio server.
+One npm package with one binary, `voice-agent`, and two ways in: the CLI commands (`ask`, `tools`) and
+`voice-agent mcp`, an MCP stdio server.
 Plain Node.js with explicit composition — no framework, DI container, decorators, or agent
 orchestration library ([decision 0001](../decisions/0001-initial-stack.md)).
 
@@ -18,7 +19,7 @@ src/
   adapters/      openai, mcp, persistence, system, logging implementations
   config/        the only process.env reader; Zod-validated config
   bootstrap/     composition root
-  entrypoints/   voice-agent.ts bin, cli.ts, mcp-stdio.ts: wiring and process I/O
+  entrypoints/   voice-agent.ts bin, cli.ts, mcp-stdio.ts, exit-codes.ts: wiring and process I/O
 tests/           unit, architecture, contract, integration, fixtures, helpers
 ```
 
@@ -54,18 +55,20 @@ entrypoint (CLI or MCP stdio) → composition root → app service (agent runner
 ```
 
 - **Entrypoint** — `src/entrypoints/cli.ts` (`ask`, `tools`; `doctor` in M6) or `mcp-stdio.ts`
-  (M5): parses and validates input, owns the root `AbortController` (aborted on the first SIGINT),
-  maps outcomes to exit codes or protocol responses.
+  (`voice-agent mcp`, loaded only for that command): parses and validates input, owns the stop
+  signals (the CLI aborts on the first SIGINT; the MCP server closes its connection on SIGINT or
+  SIGTERM), maps outcomes to exit codes or protocol responses.
 - **Speech stages** (M4) — for `ask --audio` and `--speech-out`, the CLI runs the transcription
   service before the turn and the speech output service after it
   ([audio pipeline](audio-pipeline.md)); the turn itself is unchanged.
 - **Composition root** — `src/bootstrap/create-application.ts` builds the canonical tools and
   executor once per process; `src/bootstrap/create-agent.ts` adds the OpenAI-backed agent only for
   a command that calls the model, after it has loaded its credentials
-  (`src/bootstrap/composition.ts` holds both, and tests pass their own).
+  (`src/bootstrap/composition.ts` holds both, and tests pass their own);
+  `src/bootstrap/serve-mcp.ts` serves that same application over MCP stdio.
 - **App service** — `src/app/agent/agent-runner.ts`: runs the bounded model loop through the
   `AgentModel` port ([agent loop](agent-loop.md)). The MCP path skips this hop and goes straight to
-  the executor.
+  the executor ([MCP](mcp.md)).
 - **Tool executor** — `src/app/tools/tool-executor.ts`: the one pipeline every call passes.
 - **Tool handler** — `src/tools/<tool-name>/`: receives validated input and a narrow tool context.
 - **Port → adapter** — what the handler or service needs (clock, ids, note store, model, STT, TTS,
@@ -77,19 +80,20 @@ reason; there are none.
 ## Runtime and configuration
 
 - No hosted environment: the CLI runs on a developer machine, and the MCP server is spawned over
-  stdio by an MCP host (Claude, the MCP Inspector). CI runs on Node 22 and 24 with fakes only —
-  no API key, no provider network calls.
+  stdio by an MCP host. CI runs on Linux with Node 22 and 24 and on Windows with Node 24, with fakes
+  only — no API key, no provider network calls — and starts the built MCP server as a child process
+  on all three.
 - `src/config/config.ts` validates every non-secret variable at startup, for every command;
   invalid configuration exits with code 78 and names the variable, never its value.
   `OPENAI_API_KEY` is the exception: `src/config/openai-credentials.ts` reads it only for `ask`, so
-  `--help` and `tools` work without it, and `ask` exits 78 when it is missing. `.env.example` lists
+  `--help`, `tools`, and `mcp` work without it, and `ask` exits 78 when it is missing. `.env.example` lists
   every variable.
 - Runtime data (notes) lives under the application-owned `DATA_DIR`
   (`.data/` by default, git-ignored), resolved to an absolute path against the working directory
   at startup. Audio is never stored there: `--audio` reads and `--speech-out` creates only files
   the CLI user names ([audio pipeline](audio-pipeline.md)). It must be on a local filesystem with hard links
   ([filesystem safety](security.md#filesystem-safety)); a host that spawns the process from an
-  unknown working directory (an MCP host, M5) should set it to an absolute path.
+  unknown working directory (an MCP host) should set it to an absolute path.
 
 ## Scope
 
@@ -105,10 +109,10 @@ validation schema for OpenAI, and placeholder adapters for providers that are no
 | [Tool system](tool-system.md) | A tool, the registry, the executor, risk metadata, tool results |
 | [Agent loop](agent-loop.md) | The Responses API loop, model calls, provider rules |
 | [Audio pipeline](audio-pipeline.md) | Speech-to-text, text-to-speech, audio limits or output |
-| [MCP](mcp.md) | The MCP server, its registration, stdio handling |
+| [MCP](mcp.md) | The MCP server: descriptors, results, cancellation, limits, stdio handling |
 | [Security](security.md) | Risk policy, confirmation, limits, filesystem access, secrets, retries |
 | [Observability](observability.md) | Log events, correlation fields, timings |
-| [Invariants](invariants.md) | Anything — the 36 repository invariants and where each is enforced |
+| [Invariants](invariants.md) | Anything — the 41 repository invariants and where each is enforced |
 | [Glossary](glossary.md) | Naming — the terms code and docs use exactly |
 
 Why the big choices were made: [decisions](../decisions/README.md).

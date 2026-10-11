@@ -56,10 +56,27 @@ const MAX_REPORTED_ISSUES = 10;
 /** Used when not even one issue fits within `MAX_TOOL_ERROR_MESSAGE_JSON_BYTES`. */
 const UNDESCRIBED_INPUT_ISSUES = "Invalid arguments.";
 
-const MAX_LOGGED_ERROR_MESSAGE = 500;
+/**
+ * The only error classes a log event may name. A thrown value's `name` is data the handler
+ * controls, so it is never logged itself: it is looked up here, and anything else is
+ * `other_error`. `AbortError` and `TimeoutError` are kept because a handler that stopped on the
+ * executor's signal is useful evidence.
+ */
+const LOGGABLE_ERROR_CLASSES: ReadonlySet<string> = new Set([
+  "Error",
+  "TypeError",
+  "RangeError",
+  "SyntaxError",
+  "ReferenceError",
+  "EvalError",
+  "URIError",
+  "AggregateError",
+  "AbortError",
+  "TimeoutError",
+]);
 
-/** What a thrown value may contribute to a log event: never the value itself. */
-type CauseDetails = { readonly errorName: string; readonly errorMessage?: string };
+/** What a thrown value may contribute to a log event: a classification, never the value. */
+type CauseDetails = { readonly errorClass: string };
 
 /** How an invoked handler finished. Never rejects: a thrown value is mapped to `threw`. */
 type HandlerSettlement =
@@ -129,19 +146,25 @@ function describeInputIssues(issues: readonly z.core.$ZodIssue[]): string {
 }
 
 /**
- * The thrown value stays private: only its name and message reach the error log. Total, because
- * it runs inside the executor's last catch: a thrown value with odd properties must not escape.
+ * The thrown value stays private: only a class from `LOGGABLE_ERROR_CLASSES`, `other_error`,
+ * `non_error_thrown`, or `unreadable_error` reaches the log. Its message, stack, cause, and any
+ * name outside the allowlist are never read into a log field; `Set.has` compares without
+ * converting, so a non-string name is simply not listed. Total, because it runs inside the
+ * executor's last catch: a thrown value with odd properties must not escape.
  */
 function describeCause(cause: unknown): CauseDetails {
   try {
-    return cause instanceof Error
-      ? {
-          errorName: String(cause.name),
-          errorMessage: String(cause.message).slice(0, MAX_LOGGED_ERROR_MESSAGE),
-        }
-      : { errorName: "non_error_thrown" };
+    if (!(cause instanceof Error)) {
+      return { errorClass: "non_error_thrown" };
+    }
+
+    const { name } = cause;
+
+    return {
+      errorClass: LOGGABLE_ERROR_CLASSES.has(name) ? name : "other_error",
+    };
   } catch {
-    return { errorName: "unreadable_error" };
+    return { errorClass: "unreadable_error" };
   }
 }
 
@@ -317,10 +340,10 @@ function log(
   logger[DEFECT_CODES.has(result.error.code) ? "error" : "warn"]("tool.failed", fields);
 }
 
-/** Only the declared failure reason or the thrown value's name: never output or thrown data. */
+/** Only the declared failure reason or the thrown value's class: never output or thrown data. */
 function lateOutcomeFields(settlement: HandlerSettlement): LogFields {
   if (settlement.status === "threw") {
-    return { lateOutcome: "threw", errorName: settlement.details.errorName };
+    return { lateOutcome: "threw", errorClass: settlement.details.errorClass };
   }
 
   return settlement.value.ok

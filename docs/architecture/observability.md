@@ -11,7 +11,8 @@ Structured logging and timing events.
 - Known secret fields are redacted (`apiKey`, `authorization`, `OPENAI_API_KEY`, one level deep).
 - Level from `LOG_LEVEL` (default `info`).
 - Never logged: prompts or user text, assistant text, tool arguments or results, note text,
-  idempotency keys, the provider continuation (including encrypted reasoning), provider error
+  idempotency keys, the message, stack, cause, or name of a thrown value, JSON-RPC request ids and
+  MCP message bodies, the provider continuation (including encrypted reasoning), provider error
   messages or bodies, request headers or ids, API keys, file paths and names, audio bytes or base64,
   transcriptions, spoken text, Realtime event payloads.
 
@@ -24,8 +25,8 @@ random UUID the host generates per turn; it is never sent to the model.
 
 Turn started/completed/failed; model request completed/failed; tool completed/failed; transcription
 and speech-to-text request completed/failed; speech rendering and text-to-speech request
-completed/failed; audio file failures. Planned: MCP client connected/disconnected (M5), graceful
-shutdown (M6).
+completed/failed; audio file failures; MCP transport errors and a stopped MCP connection. Planned:
+graceful shutdown of the rest of the process (M6).
 
 ## Turn events
 
@@ -63,15 +64,31 @@ The executor logs exactly one outcome event per tool call: `tool.completed` (inf
 the host and is never trusted as a log value), `toolName` (an unregistered name only when it has a
 tool name's form, otherwise `null`), `risk`,
 `outcome` (`ok` or the error code), `handlerInvoked`, `durationMs`, and per outcome `issueCount`,
-`failureReason`, output issue paths and codes, `resultBytes`, or the thrown error's name and
-message. Arguments and outputs are never logged.
+`failureReason`, output issue paths and codes, `resultBytes`, or `errorClass` for a thrown value: a
+class from a fixed allowlist (`TypeError`, `AbortError`, …), else `other_error`, `non_error_thrown`,
+or `unreadable_error`. A thrown value's message, stack, cause, and name are never logged, because they
+are handler-controlled and can hold secrets. Arguments and outputs are never logged.
 
 When a handler settles after the executor already returned `cancelled` or `timed_out`, the executor
 logs `tool.settled_late` (warn): `toolCallId`, `toolName`, `risk`, `durationMs` from the call's
 start, and `lateOutcome` — `returned`, `failed` with the declared `failureReason`, or `threw` with
-only the thrown value's `errorName`. It is the evidence that a write reported as "outcome unknown"
+only the thrown value's `errorClass`. It is the evidence that a write reported as "outcome unknown"
 did complete. It never changes the caller's result and never logs output or thrown data. A handler
 that never settles logs nothing more.
+
+## MCP events
+
+`voice-agent mcp` ([MCP](mcp.md)) logs to stderr like every process; stdout carries only protocol
+messages. Tool calls produce the tool events above, with `toolCallId` set to `mcp:<uuid>` (generated
+by the server, never the JSON-RPC id). The server adds two events, with fixed fields only:
+
+- `mcp.transport_error` (warn): the transport reported an error. It carries no fields: the SDK's
+  error and its message are never read, because they can echo what a client sent.
+- `mcp.stopped` (error): the connection ended after a transport failure (for example an oversized
+  message); the process exits 1. `reason: "transport_failed"`.
+
+A refused call (`server_busy`) and an unknown tool are tool outcomes, not MCP events. A normal end
+(stdin closed, SIGINT, SIGTERM) logs nothing of its own.
 
 ## Note store events
 

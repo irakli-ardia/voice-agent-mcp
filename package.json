@@ -1,7 +1,7 @@
 {
   "name": "voice-agent-mcp",
   "version": "0.1.0",
-  "description": "Voice-driven OpenAI tool-calling agent: canonical typed tools, speech in and out, MCP server planned.",
+  "description": "Voice-driven OpenAI tool-calling agent: canonical typed tools, speech in and out, and the same tools served to MCP clients over stdio.",
   "license": "MIT",
   "author": "Irakli Ardia",
   "private": true,
@@ -27,20 +27,23 @@
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
     "test:openai": "npm run build && vitest run --config vitest.live.config.ts",
+    "test:mcp-dist": "npm run build && vitest run --config vitest.mcp-dist.config.ts",
     "check:architecture": "vitest run tests/architecture",
     "check:forbidden-types": "vitest run tests/architecture/forbidden-type-escapes.test.ts",
     "fallow": "fallow --quiet",
     "docs:check": "node scripts/checks/docs-check.mjs",
     "git:check-current-branch": "node scripts/git/conventions.mjs current",
-    "check": "npm run docs:check && npm run lint && npm run typecheck && npm run fallow && npm run test:coverage && npm run build"
+    "check": "npm run docs:check && npm run lint && npm run typecheck && npm run fallow && npm run test:coverage && npm run test:mcp-dist"
   },
   "dependencies": {
+    "@modelcontextprotocol/server": "2.3.1",
     "openai": "7.28.0",
     "pino": "10.4.0",
     "zod": "4.6.5"
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.15",
+    "@modelcontextprotocol/client": "2.3.1",
     "@oxlint/plugins": "1.87.0",
     "@types/node": "24.19.1",
     "@vitest/coverage-v8": "5.0.3",

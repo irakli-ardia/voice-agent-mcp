@@ -46,6 +46,7 @@ const configSchema = z
     OPENAI_TTS_MODEL: modelIdSchema.default("gpt-realtime-2.1-mini"),
     OPENAI_TTS_VOICE: voiceSchema.default("marin"),
     SPEECH_TIMEOUT_MS: z.coerce.number().int().min(5_000).max(600_000).default(180_000),
+    MCP_MAX_IN_FLIGHT_CALLS: z.coerce.number().int().min(1).max(128).default(16),
   })
   .transform((env) => ({
     logLevel: env.LOG_LEVEL,
@@ -78,6 +79,10 @@ const configSchema = z
     speech: {
       /** One budget per speech operation: every step, attempt, wait, and byte received. */
       timeoutMs: env.SPEECH_TIMEOUT_MS,
+    },
+    mcp: {
+      /** Concurrent `tools/call` requests being executed; more are refused with `server_busy`. */
+      maxInFlightCalls: env.MCP_MAX_IN_FLIGHT_CALLS,
     },
   }));
 

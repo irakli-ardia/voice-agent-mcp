@@ -4,7 +4,8 @@ The architectural centerpiece: a tool is defined once and every caller — the O
 the MCP server — derives from that definition and executes through one executor. Status: the
 definition, registry, executor, and two read-only tools are built (M1); `create_note` and
 `read_note` on a file-backed note store are built (M2); idempotency metadata, the model-facing
-schema projection, and the agent loop's use of both are built (M3).
+schema projection, and the agent loop's use of both are built (M3); the MCP server derives its tool
+descriptors from the same registry and runs every call through the same executor (M5).
 
 ## Tool definition
 
@@ -59,8 +60,9 @@ to the error log.
   an out-of-range `timeoutMs`, an `idempotency` value that disagrees with the input schema (in
   either direction), or a declared failure message over the byte bound below.
 - From the registry come the model-facing function tools (`src/app/agent/model-tools.ts`), the
-  `voice-agent tools` catalog, and, in M5, MCP tool registration. No hand-written OpenAI or MCP
-  tool definitions exist anywhere.
+  `voice-agent tools` catalog, and the MCP tool descriptors (`src/adapters/mcp/mcp-tool-descriptors.ts`,
+  which keeps `idempotencyKey` visible). No hand-written OpenAI or MCP tool definitions exist
+  anywhere.
 - The model-facing schema is projected from the canonical Zod schema: for a `key` tool,
   `idempotencyKey` is omitted on a new schema (the canonical one is never changed), then converted
   to JSON Schema. A projection that is not strict-compatible — an open object or an optional
@@ -138,7 +140,7 @@ never invoked.
 `MAX_TOOL_RESULT_BYTES` bounds the UTF-8 byte length of the serialised JSON result that leaves the
 executor. It does not bound memory or CPU a handler uses, or the size of an object a handler builds
 before it is validated and measured. Argument size is bounded by the provider's output limit in the
-agent loop (`OPENAI_MAX_OUTPUT_TOKENS`), by the transport over MCP (M5), and by schema limits such
+agent loop (`OPENAI_MAX_OUTPUT_TOKENS`), by the 1 MiB transport limit over MCP, and by schema limits such
 as `maxLength`.
 
 ## Write tools and idempotency
@@ -155,7 +157,8 @@ A write retried after an unknown outcome must not repeat its effect
 - The key belongs to the caller of the executor. In the agent loop that is the host: the field is
   absent from the model-facing schema, and the runner derives the key from the turn, the tool, and
   the other arguments ([agent loop](agent-loop.md#arguments-and-host-owned-keys)), replacing any key
-  the model sends. An MCP client supplies its own (M5).
+  the model sends. An MCP client supplies its own: the field stays in the MCP schema and the adapter
+  never changes it ([MCP](mcp.md#idempotency)).
 - `create_note`: one key names one note. The same key and the same text replay the original note
   with `created: false`; the same key and different text fail with `idempotency_key_conflict`;
   different keys create different notes, even with the same text. Text is compared exactly.
@@ -198,4 +201,4 @@ The store's commit point and its guarantees are in [security](security.md#filesy
 5. Add the definition to the registry in `src/bootstrap/create-application.ts`.
 6. Add unit tests through the executor (valid, invalid input, each failure reason; idempotency if
    it writes). `tests/contract/tool-registry.test.ts` checks the new tool automatically.
-7. The agent loop exposes it automatically; MCP will too (M5).
+7. The agent loop and the MCP server expose it automatically.

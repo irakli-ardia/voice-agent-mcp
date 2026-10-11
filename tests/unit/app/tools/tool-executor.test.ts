@@ -374,7 +374,7 @@ describe("createToolExecutor: expected failures", () => {
 });
 
 describe("createToolExecutor: unexpected failures", () => {
-  it("hides a thrown error's message from the caller and logs it", async () => {
+  it("hides a thrown error's message from the caller and from the log, naming only its class", async () => {
     const { execute, logger } = harness([
       echoTool(async () => {
         throw new TypeError("connection to db failed: password=sk-db-secret");
@@ -388,6 +388,7 @@ describe("createToolExecutor: unexpected failures", () => {
       error: { code: "internal_error", message: "The tool failed unexpectedly." },
     });
     expect(JSON.stringify(result)).not.toContain("sk-db-secret");
+    expect(JSON.stringify(logger.entries)).not.toContain("sk-db-secret");
     expect(logger.entries).toEqual([
       expect.objectContaining({
         level: "error",
@@ -395,11 +396,12 @@ describe("createToolExecutor: unexpected failures", () => {
         fields: expect.objectContaining({
           outcome: "internal_error",
           handlerInvoked: true,
-          errorName: "TypeError",
-          errorMessage: "connection to db failed: password=sk-db-secret",
+          errorClass: "TypeError",
         }),
       }),
     ]);
+    expect(logger.entries[0]?.fields).not.toHaveProperty("errorMessage");
+    expect(logger.entries[0]?.fields).not.toHaveProperty("errorName");
   });
 
   it("never logs a thrown value that is not an Error", async () => {
@@ -413,25 +415,34 @@ describe("createToolExecutor: unexpected failures", () => {
     expect(JSON.stringify(logger.entries)).not.toContain("sk-raw-value");
     expect(logger.entries).toEqual([
       expect.objectContaining({
-        fields: expect.objectContaining({ errorName: "non_error_thrown" }),
+        fields: expect.objectContaining({ errorClass: "non_error_thrown" }),
       }),
     ]);
   });
 
   it.each([
     [
-      "a non-string message",
+      "a non-string message, which is never read",
       Object.defineProperty(new Error("x"), "message", { value: 42 }),
-      { errorName: "Error", errorMessage: "42" },
+      { errorClass: "Error" },
     ],
     [
-      "a message getter that throws",
+      "a message getter that throws, which is never called",
       Object.defineProperty(new Error("x"), "message", {
         get: () => {
           throw new Error("getter bug");
         },
       }),
-      { errorName: "unreadable_error" },
+      { errorClass: "Error" },
+    ],
+    [
+      "a name getter that throws",
+      Object.defineProperty(new Error("x"), "name", {
+        get: () => {
+          throw new Error("getter bug");
+        },
+      }),
+      { errorClass: "unreadable_error" },
     ],
   ])("never throws itself when a thrown Error has %s", async (_label, thrown, logged) => {
     const tool: ToolDefinition = {
@@ -850,7 +861,7 @@ describe("createToolExecutor: late settlement", () => {
       async () => {
         throw new RangeError("sk-late-secret at C:\\data\\notes");
       },
-      { lateOutcome: "threw", errorName: "RangeError" },
+      { lateOutcome: "threw", errorClass: "RangeError" },
     ],
   ] satisfies [string, () => Promise<EchoResult>, LogFields][])(
     "logs tool.settled_late when a timed-out handler later %s, without changing the result",

@@ -3,8 +3,9 @@ import { defineConfig } from "vitest/config";
 export default defineConfig({
   test: {
     include: ["tests/**/*.test.ts"],
-    // Live OpenAI tests spend API credits; they run only through `npm run test:openai`.
-    exclude: ["tests/live/**", "node_modules/**"],
+    // Live OpenAI tests spend API credits; they run only through `npm run test:openai`. The
+    // built-distribution tests need `dist/`; they run through `npm run test:mcp-dist`.
+    exclude: ["tests/live/**", "tests/e2e/**", "node_modules/**"],
     allowOnly: false,
     coverage: {
       provider: "v8",

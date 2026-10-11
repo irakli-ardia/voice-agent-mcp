@@ -22,6 +22,7 @@ export function testConfig(overrides: Partial<Config> & Pick<Config, "dataDir">)
       ttsVoice: "marin",
     },
     speech: { timeoutMs: 180_000 },
+    mcp: { maxInFlightCalls: 16 },
     ...overrides,
   };
 }

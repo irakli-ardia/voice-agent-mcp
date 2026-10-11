@@ -10,10 +10,11 @@ npx vitest run --changed
 
 | Command | Runs |
 | --- | --- |
-| `npm test` | Every test under `tests/` (Vitest 5), no network |
+| `npm test` | Every test under `tests/` except the live and built-distribution suites (Vitest 5), no network |
 | `npm run test:coverage` | Same, with v8 coverage and thresholds (lines/functions/statements 90 %, branches 85 %) |
 | `npm run check:architecture` | `tests/architecture/` — dependency direction, `process.env` ownership, filesystem access only in persistence adapters, forbidden type escapes, the single tool execution path |
 | `npm run check:forbidden-types` | Only the forbidden-type-escape scan |
+| `npm run test:mcp-dist` | Builds, then runs the MCP server from `dist/` as real child processes under plain `node` (`tests/e2e/mcp-dist/`); no key, no network ([the MCP server](#the-mcp-server)) |
 | `npx vitest run --changed` | Tests affected by uncommitted changes |
 | `npm run test:openai` | Opt-in live suite in `tests/live/` against the real OpenAI API (builds first). Needs `OPENAI_API_KEY` and the network, and spends API credits; never part of `npm test`, `npm run check`, or CI |
 
@@ -31,7 +32,8 @@ tests/
   unit/<src path>/<file>.test.ts   one file per source file, mirroring src/
   architecture/                    invariants scanned from source (imports, env, type escapes)
   contract/                        registry contract: names, descriptions, risk, failures, schemas (M1); adapters use the same registry (M3/M5)
-  integration/                     real wiring: notes on the file store through the executor; a whole agent turn with a fake model; ask with audio and speech on the real filesystem; MCP server in memory (M5)
+  integration/                     real wiring: notes on the file store through the executor; a whole agent turn with a fake model; ask with audio and speech on the real filesystem; the MCP server in memory and as real child processes over stdio
+  e2e/mcp-dist/                    the built MCP server driven over real stdio (`npm run test:mcp-dist`)
   live/                            opt-in checks against the real OpenAI API (`npm run test:openai`)
   helpers/                         typed fakes, audio header builders, a loopback Realtime server, scanners
 ```
@@ -87,6 +89,35 @@ tests/
   exit codes, event names, timings, sizes, token counts — never audio, transcriptions, or answers
   of real requests.
 
+## The MCP server
+
+Four layers, each proving what the one before cannot:
+
+1. **In memory:** the real SDK client against the server over an in-memory transport
+   (`tests/integration/mcp-server*.test.ts`, `mcp-idempotency`, `mcp-cancellation-side-effects`,
+   `mcp-privacy`, `mcp-result-bounds`, `mcp-resource-bounds`). That transport passes objects by
+   reference, so agreement between `structuredContent` and the text is only proven on a real wire.
+2. **Plain streams:** the composition and the entrypoint on `PassThrough` streams
+   (`tests/unit/bootstrap/serve-mcp.test.ts`, `tests/unit/entrypoints/mcp-stdio.test.ts`): exit codes,
+   signals, listeners, the 1 MiB limit.
+3. **Real processes from source:** `tests/integration/mcp-stdio-*.test.ts` start `voice-agent mcp` through
+   `tsx`: every stdout line is parsed as JSON-RPC, both protocol eras, the official client, privacy
+   sentinels, and a write held in progress so cancellation, stdin EOF, the in-flight limit, and
+   signals act on a genuinely running operation.
+4. **The built distribution:** `npm run test:mcp-dist` builds, then `tests/e2e/mcp-dist/` runs
+   `node dist/entrypoints/voice-agent.js mcp`, with no loader, from a working directory outside the
+   repository. A setup guard refuses to run against a missing or stale `dist/`.
+
+How they stay deterministic: no test sleeps. A held write stops inside the note store's commit window
+until the test releases it over IPC (`tests/helpers/mcp-gated-write-server.mjs`, test-only; the public
+CLI has no such hook), and tests wait on messages from the child. Every child is killed and awaited
+in a `finally`, with a bounded wait so a hang fails instead of stalling. Children get the SDK's
+safe-environment allowlist, never the developer's environment, so no API key can leak in.
+
+Signals: on Windows `kill()` ends a child process without delivering SIGINT or SIGTERM, so the three
+signal tests run only on POSIX and are skipped, visibly, on Windows. Closing stdin, the stop that works everywhere, is tested
+on both. The test jobs run on Linux with Node 22 and 24 and on Windows with Node 24.
+
 ## What to cover
 
 Every tool; input and output validation; registry lookup; error mapping; retry policy; timeouts;
@@ -96,9 +127,11 @@ executor, policy, and agent-loop code should be near-complete; don't chase 100 %
 
 ## What counts as verified
 
-Unit tests prove logic. They do not prove the CLI wires a command, that the MCP server keeps stdout
-clean, or that a real provider accepts the request. For those, run the built CLI, the live suite,
-or the MCP Inspector and note what you observed in the pull request — metadata only: no prompts
+Unit tests prove logic. They do not prove the CLI wires a command, or that a real provider accepts
+the request. For those, run the built CLI or the live suite, and note what you observed in the pull
+request. The MCP server's stdout discipline, exit codes, and shutdown are proven by real child
+processes (`npm run test:mcp-dist`); a host that has not been tried (for example a particular MCP
+client application) is not covered by any test. Note what you observed — metadata only: no prompts
 with user data, responses, reasoning, tool payloads, headers, or keys.
 
 The live suite covers: strict tool schemas accepted, including an empty object, string bounds, and

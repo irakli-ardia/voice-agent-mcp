@@ -22,6 +22,8 @@ const OPENAI_DEFAULTS = {
 
 const SPEECH_DEFAULTS = { timeoutMs: 180_000 };
 
+const MCP_DEFAULTS = { maxInFlightCalls: 16 };
+
 const DEFAULTS = {
   logLevel: "info",
   maxToolResultBytes: 16_384,
@@ -29,6 +31,7 @@ const DEFAULTS = {
   agent: AGENT_DEFAULTS,
   openai: OPENAI_DEFAULTS,
   speech: SPEECH_DEFAULTS,
+  mcp: MCP_DEFAULTS,
 };
 
 describe("loadConfig", () => {
@@ -129,6 +132,31 @@ describe("loadConfig", () => {
       expect(JSON.stringify(loadConfig({ [variable]: "sk-secret-limit" }))).not.toContain(
         "sk-secret-limit",
       );
+    });
+  });
+
+  describe("MCP_MAX_IN_FLIGHT_CALLS", () => {
+    it.each(["1", "128"])("accepts the bound %s", (value) => {
+      expect(loadConfig({ MCP_MAX_IN_FLIGHT_CALLS: value })).toEqual({
+        ok: true,
+        config: { ...DEFAULTS, mcp: { maxInFlightCalls: Number(value) } },
+      });
+    });
+
+    it.each(["0", "129", "1.5", "-1", "", "many"])(
+      "rejects %j, naming only the variable",
+      (value) => {
+        expect(loadConfig({ MCP_MAX_IN_FLIGHT_CALLS: value })).toEqual({
+          ok: false,
+          issues: [expect.stringMatching(/^MCP_MAX_IN_FLIGHT_CALLS: /)],
+        });
+      },
+    );
+
+    it("does not echo a rejected value", () => {
+      expect(
+        JSON.stringify(loadConfig({ MCP_MAX_IN_FLIGHT_CALLS: "sk-secret-limit" })),
+      ).not.toContain("sk-secret-limit");
     });
   });
 

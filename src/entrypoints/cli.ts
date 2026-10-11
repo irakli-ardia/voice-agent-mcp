@@ -6,25 +6,27 @@ import type { Result } from "../domain/result.js";
 import type { SpeechError, SpeechErrorCode } from "../domain/speech-error.js";
 import type { TurnError, TurnErrorCode } from "../domain/turn-error.js";
 import { type AskCommand, parseCommand, USAGE, USAGE_REASONS } from "./cli-arguments.js";
+import {
+  EXIT_CONFIG,
+  EXIT_FAILURE,
+  EXIT_INTERRUPTED,
+  EXIT_OK,
+  EXIT_SOFTWARE,
+  EXIT_TEMPFAIL,
+  EXIT_UNAVAILABLE,
+  EXIT_USAGE,
+} from "./exit-codes.js";
 
-export const EXIT_OK = 0;
-
-/** Every typed failure without a more specific code below. */
-export const EXIT_FAILURE = 1;
-
-/** Command-line usage, and input the user can correct before any provider is used. */
-export const EXIT_USAGE = 64;
-
-export const EXIT_UNAVAILABLE = 69;
-
-export const EXIT_SOFTWARE = 70;
-
-export const EXIT_TEMPFAIL = 75;
-
-export const EXIT_CONFIG = 78;
-
-/** 128 + SIGINT, as shells report an interrupted command. */
-export const EXIT_INTERRUPTED = 130;
+export {
+  EXIT_CONFIG,
+  EXIT_FAILURE,
+  EXIT_INTERRUPTED,
+  EXIT_OK,
+  EXIT_SOFTWARE,
+  EXIT_TEMPFAIL,
+  EXIT_UNAVAILABLE,
+  EXIT_USAGE,
+} from "./exit-codes.js";
 
 const EXIT_CODES = {
   cancelled: EXIT_INTERRUPTED,

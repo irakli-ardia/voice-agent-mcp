@@ -7,7 +7,7 @@ variable.
 
 - Node.js 24 LTS (22.12 or later also works; CI runs both) with npm.
 - Git (the `prepare` script installs the repository's git hooks on `npm install`).
-- No database, Docker, or cloud CLI. An OpenAI API key is needed only for `ask`; `--help`, `tools`,
+- No database, Docker, or cloud CLI. An OpenAI API key is needed only for `ask`; `--help`, `tools`, `mcp`,
   and every test (`npm test`, `npm run check`, CI) run without one.
 
 ## First run
@@ -56,6 +56,7 @@ the variable, never the value.
 | Secret | `OPENAI_API_KEY` (read only by `ask`) |
 | Agent | `OPENAI_MODEL`, `OPENAI_REASONING_EFFORT`, `OPENAI_MAX_OUTPUT_TOKENS`, `OPENAI_TIMEOUT_MS`, `MAX_AGENT_ITERATIONS`, `MAX_TOOL_CALLS_PER_TURN`, `MAX_INPUT_TEXT_CHARS`, `AGENT_TURN_TIMEOUT_MS` |
 | Speech | `OPENAI_STT_MODEL` (`gpt-transcribe`), `OPENAI_TTS_MODEL` (`gpt-realtime-2.1-mini`), `OPENAI_TTS_VOICE` (`marin`), `SPEECH_TIMEOUT_MS` (180000) |
+| MCP | `MCP_MAX_IN_FLIGHT_CALLS` (16; 1–128): tool calls an MCP client may have running at once |
 | Shared | `OPENAI_MAX_RETRIES`, `LOG_LEVEL`, `MAX_TOOL_RESULT_BYTES`, `DATA_DIR` |
 
 Fixed in code, not configuration: the 8 MiB audio input limit, the 800-character limit for spoken
@@ -67,7 +68,27 @@ answers, and the 9 600 000-byte PCM cap per rendering.
 | --- | --- | --- |
 | CLI from source | `npm run dev -- <command>` (with the key exported in your shell for `ask`) | — |
 | Built CLI | `npm run build && npm start -- <command>` | — |
-| MCP stdio server (M5) | `npm run mcp` (planned) | — (stdio) |
+| MCP stdio server | `npm run --silent dev -- mcp` (source) or `npm run build && npm start --silent -- mcp` (built); an MCP client normally starts it, with `node` directly | — (stdio) |
+
+## MCP server
+
+`voice-agent mcp` needs no key. An MCP client starts it as a child process and speaks MCP on its
+stdin and stdout; run by hand it just waits for input (stop it with Ctrl+C, or by closing stdin). Point a client at the built entry point and give it an absolute `DATA_DIR`
+(the [README](../README.md#connect-a-client) has the configuration shape):
+
+```bash
+npm run build
+DATA_DIR=/absolute/path/for/notes node dist/entrypoints/voice-agent.js mcp
+```
+
+**Do not start the server through npm without `--silent`.** `npm run` and `npm start` print a banner
+(`> voice-agent-mcp@… start`) on stdout, which is not an MCP message and breaks the protocol. Configure
+clients with `node dist/entrypoints/voice-agent.js mcp`.
+
+stdout carries protocol messages only; logs go to stderr (`LOG_LEVEL=silent` hides them). Exit
+codes: 0 stdin closed, 1 transport failure (for example a message over 1 MiB), 64 extra arguments,
+70 unexpected failure, 78 invalid configuration, 130 SIGINT, 143 SIGTERM. To exercise the built
+server as the tests do: `npm run test:mcp-dist`. Details: [MCP](architecture/mcp.md).
 
 ## Gotchas
 

@@ -18,15 +18,16 @@ This file is the complete list.
 
 | # | Rule | Enforced by |
 | --- | --- | --- |
-| 6 | Every model-callable action exists in the canonical registry | `tests/contract/tool-registry.test.ts` (including the model-facing projection); MCP contract tests (planned, M5) |
-| 7 | OpenAI and MCP never implement separate tool handlers | Contract test: both adapters derive from the same registry (planned, M5) |
+| 6 | Every model-callable action exists in the canonical registry | `tests/contract/tool-registry.test.ts` (including the model-facing projection); `tests/unit/adapters/mcp/mcp-tool-descriptors.test.ts` (the MCP descriptors, one per registered tool, in order) |
+| 7 | OpenAI and MCP never implement separate tool handlers | Both adapters derive from the one registry; architecture tests: the MCP adapter builds no executor, imports no tool, and is independent of the OpenAI adapter (`tests/architecture/dependency-direction.test.ts`) |
 | 8 | Every tool has input and output validation | `defineTool` types, executor validation, `tests/contract/tool-registry.test.ts` |
 | 9 | Every tool has risk metadata | `ToolSpec` type (destructive requires confirmation), `tests/contract/tool-registry.test.ts` |
-| 10 | Every tool execution passes through policy + timeout + logging | Single executor, `tests/architecture/tool-execution-path.test.ts`; agent runner tests (calls reach the real executor); MCP (planned, M5) |
+| 10 | Every tool execution passes through policy + timeout + logging | Single executor, `tests/architecture/tool-execution-path.test.ts`; agent runner tests (calls reach the real executor); `tests/integration/mcp-server*.test.ts` (MCP calls reach the real executor under an `mcp:` call id) |
 | 11 | Destructive tools cannot self-confirm through the LLM | Executor policy fails closed until the host confirmation channel exists (M6); executor tests |
 | 29 | Every write tool takes a required idempotency key; a repeated key never repeats the effect | `tests/contract/tool-registry.test.ts` (required, bounded key on every `write` tool); tool, store, and integration tests ([decision 0008](../decisions/0008-idempotent-note-creation.md)) |
 | 30 | Host-owned fields never reach the model: a `key` tool's `idempotencyKey` is absent from its model-facing schema and is always derived by the host in the agent loop | `idempotency` metadata (`defineTool` type, registry startup check), `tests/contract/tool-registry.test.ts`, `tests/unit/app/agent/` (projection, derivation, runner) |
 | 31 | No tool call runs from a model step that was not accepted: invalid or reused call ids, an exhausted iteration or tool-call budget, an incomplete, refused, or unsupported response | `tests/unit/app/agent/agent-runner.test.ts`, `tests/unit/adapters/openai/responses-agent-model.test.ts` |
+| 37 | The MCP server exposes exactly the registry's tools, with their canonical schemas and the required `idempotencyKey`, and never generates, derives, or rewrites a key | `tests/unit/adapters/mcp/mcp-tool-descriptors.test.ts`, `tests/integration/mcp-idempotency.test.ts`, `tests/integration/mcp-server.test.ts` ([decision 0011](../decisions/0011-mcp-server-on-the-low-level-sdk-api.md)) |
 
 ## Architecture invariants
 
@@ -48,8 +49,11 @@ This file is the complete list.
 | 19 | The serialised tool result leaving the executor is bounded (not handler memory) | `MAX_TOOL_RESULT_BYTES`, executor tests |
 | 33 | Every tool error message is at most 1024 bytes as serialised JSON, so a tool-result envelope has an exact maximum size | Executor `invalid_input` cap, registry startup check, executor, registry, and adapter envelope tests |
 | 20 | Logs are structured and secret-safe | pino adapter with redaction + `tests/unit/adapters/logging/pino-logger.test.ts` |
-| 21 | MCP stdio never logs to stdout | Logger defaults to stderr; MCP stdout-clean test (planned, M5) |
-| 22 | Shutdown is graceful | Shutdown tests (planned, M6) |
+| 21 | MCP stdio never writes anything but protocol messages to stdout | Logger writes to stderr; no `console` in `src` and process streams only in the bin (architecture test); every stdout line of the real server, source and built, is parsed as JSON-RPC (`tests/integration/mcp-stdio-*.test.ts`, `tests/e2e/mcp-dist/`) |
+| 22 | Shutdown is graceful | MCP: stdin EOF and SIGINT/SIGTERM close the connection, abort in-flight calls, and release stdin (`tests/integration/mcp-stdio-side-effects.test.ts`); the rest of the process, M6 |
+| 38 | Concurrent MCP calls are bounded: past `MCP_MAX_IN_FLIGHT_CALLS` a call is refused with `server_busy` before any handler runs, and every slot is released however a call ends | `tests/unit/adapters/mcp/create-mcp-server.test.ts`, `tests/integration/mcp-server-concurrency.test.ts`, `mcp-resource-bounds.test.ts`; the cap does not count handlers that outlive a cancellation or timeout ([MCP](mcp.md#concurrency-and-limits)) |
+| 39 | An inbound MCP message is at most 1 MiB; an oversized one ends the process with exit 1, never 0, and never hangs it | `tests/unit/bootstrap/serve-mcp.test.ts`, `tests/integration/mcp-stdio-process.test.ts`, `tests/e2e/mcp-dist/` |
+| 40 | A thrown value never reaches a log or a response: only a class from a fixed allowlist is logged | `tests/unit/app/tools/tool-executor-log-privacy.test.ts` (real pino, hostile errors), `tests/integration/mcp-privacy.test.ts` ([decision 0012](../decisions/0012-thrown-values-are-never-logged.md)) |
 
 ## Speech invariants
 
@@ -69,3 +73,4 @@ This file is the complete list.
 | 26 | No `.only` committed | Vitest `allowOnly: false` |
 | 27 | No secret or `.env` committed | `.gitignore`, review, GitHub secret scanning |
 | 28 | New tools require tests and registry documentation | Contract tests + [tool system](tool-system.md) checklist |
+| 41 | The built MCP server is exercised by real child processes in every CI job, not only the TypeScript sources | `npm run test:mcp-dist` (`tests/e2e/mcp-dist/`), `.github/workflows/ci.yml` |

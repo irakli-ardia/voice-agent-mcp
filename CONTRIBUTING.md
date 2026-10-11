@@ -39,6 +39,7 @@ Enforced by the git hooks in `.githooks/` and by CI on every pull request.
 | Architecture invariants | `npm run check:architecture`, `npm run check:forbidden-types`, `npm run fallow` |
 | Docs | `npm run docs:check` |
 | Build | `npm run build` |
+| Built MCP server (real child processes, builds first) | `npm run test:mcp-dist` |
 
 ## Pull requests
 

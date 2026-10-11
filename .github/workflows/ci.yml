@@ -67,9 +67,14 @@ jobs:
         run: "npm run test:coverage"
       - name: Build
         run: "npm run build"
+      # Real child processes running the compiled dist/ (never the TypeScript sources): both protocol
+      # eras, stdout purity, cancellation, EOF, oversized input, exit codes. Builds first; no key.
+      - name: MCP built-distribution tests
+        run: "npm run test:mcp-dist"
 
   # The deterministic suite on Windows: Windows-only filesystem cases (device paths, symlink
-  # behaviour, open-file rename rules) and the loopback WebSocket tests. Coverage stays on Linux.
+  # behaviour, open-file rename rules), the loopback WebSocket tests, and the MCP server built to
+  # dist/ and driven over real stdio by child processes. Coverage stays on Linux.
   windows:
     runs-on: windows-latest
     timeout-minutes: 20
@@ -85,3 +90,5 @@ jobs:
         run: "npm ci"
       - name: Test
         run: "npm test"
+      - name: MCP built-distribution tests
+        run: "npm run test:mcp-dist"

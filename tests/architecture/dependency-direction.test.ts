@@ -109,6 +109,110 @@ describe("dependency direction", () => {
     expect(importers.filter((path) => !path.startsWith("src/adapters/openai/"))).toEqual([]);
   });
 
+  it("lets only the MCP adapter and the stdio composition import the MCP SDK", () => {
+    const importers = readTypeScriptFiles("src").flatMap((file) =>
+      importSpecifiers(file.text).some((specifier) => /^@modelcontextprotocol\//.test(specifier))
+        ? [file.path]
+        : [],
+    );
+
+    expect(
+      importers.filter(
+        (path) => !path.startsWith("src/adapters/mcp/") && path !== "src/bootstrap/serve-mcp.ts",
+      ),
+    ).toEqual([]);
+    expect(importers).toContain("src/adapters/mcp/mcp-tool-descriptors.ts");
+    expect(importers).toContain("src/bootstrap/serve-mcp.ts");
+  });
+
+  it("keeps the MCP adapter independent of the OpenAI projection and agent", () => {
+    const violations = importsMatching(
+      ["src/adapters/mcp"],
+      (target) =>
+        target.startsWith("src/app/agent/") ||
+        target.startsWith("src/adapters/openai/") ||
+        /^openai(\/|$)/.test(target),
+    );
+
+    expect(violations).toEqual([]);
+  });
+
+  it("keeps the MCP adapter on the injected executor: it builds none and imports no tool", () => {
+    const files = readTypeScriptFiles("src/adapters/mcp");
+    const buildsExecutor = files.filter((file) => /\bcreateToolExecutor\b/.test(file.text));
+
+    const importsToolValues = importsMatching(
+      ["src/adapters/mcp"],
+      (target) => target.startsWith("src/tools/") && !target.endsWith("tool-definition.js"),
+    );
+
+    expect(files.length).toBeGreaterThan(0);
+    expect(buildsExecutor.map((file) => file.path)).toEqual([]);
+    expect(importsToolValues).toEqual([]);
+  });
+
+  it("keeps stdout for protocol traffic: no console, and the process streams only in the bin", () => {
+    const files = readTypeScriptFiles("src");
+
+    const consoleUsers = files
+      .filter((file) => /\bconsole\s*\./.test(file.text))
+      .map((file) => file.path);
+
+    const streamUsers = files
+      .filter((file) => /\bprocess\s*\.\s*(stdout|stdin)\b/.test(file.text))
+      .map((file) => file.path);
+
+    expect(consoleUsers).toEqual([]);
+    expect(streamUsers).toEqual(["src/entrypoints/voice-agent.ts"]);
+  });
+
+  it("loads the MCP entrypoint lazily, and it reaches no OpenAI, agent, or speech module", () => {
+    const sources = new Map(readTypeScriptFiles("src").map((file) => [file.path, file.text]));
+    const bin = sources.get("src/entrypoints/voice-agent.ts") ?? "";
+
+    expect(bin).toMatch(/await import\("\.\/mcp-stdio\.js"\)/);
+    expect(bin).not.toMatch(/^import .* from "\.\/mcp-stdio\.js"/m);
+
+    const reached = new Set<string>();
+    const queue = ["src/entrypoints/mcp-stdio.ts"];
+
+    for (let path = queue.pop(); path !== undefined; path = queue.pop()) {
+      if (reached.has(path)) {
+        continue;
+      }
+
+      reached.add(path);
+
+      for (const specifier of importSpecifiers(sources.get(path) ?? "")) {
+        const target = resolveRelative(path, specifier).replace(/\.js$/, ".ts");
+
+        if (specifier.startsWith(".") && sources.has(target)) {
+          queue.push(target);
+        }
+      }
+    }
+
+    const forbidden = [...reached].filter(
+      (path) =>
+        path.startsWith("src/adapters/openai/") ||
+        path.startsWith("src/app/agent/") ||
+        path.startsWith("src/app/audio/") ||
+        path === "src/bootstrap/composition.ts" ||
+        path === "src/entrypoints/cli.ts",
+    );
+
+    expect(reached.has("src/bootstrap/serve-mcp.ts")).toBe(true);
+    expect(forbidden).toEqual([]);
+  });
+
+  it("keeps the OpenAI adapter and agent independent of the MCP adapter", () => {
+    const violations = importsMatching(["src/adapters/openai", "src/app/agent"], (target) =>
+      target.startsWith("src/adapters/mcp/"),
+    );
+
+    expect(violations).toEqual([]);
+  });
+
   it("lets only the Realtime speech renderer use the platform WebSocket", () => {
     const users = readTypeScriptFiles("src")
       .filter((file) => /\bWebSocket\b/.test(file.text))
