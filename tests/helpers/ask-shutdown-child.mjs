@@ -2,7 +2,13 @@
 // It wires the bin's shutdown glue exactly as `voice-agent.js` does for `ask` (runUntilStopped with
 // process.exit as the one forced exit), around a command that the scenario controls, so real
 // signals reach real code in a real process. `ask` itself needs a key and a network.
-import { runUntilStopped } from "../../dist/entrypoints/interrupt.js";
+import { join } from "node:path";
+import { pathToFileURL } from "node:url";
+
+// dist/ exists only after a build, so it is loaded at run time (static analysis cannot resolve it).
+const { runUntilStopped } = await import(
+  pathToFileURL(join(import.meta.dirname, "..", "..", "dist", "entrypoints", "interrupt.js")).href
+);
 
 const scenario = process.argv[2];
 

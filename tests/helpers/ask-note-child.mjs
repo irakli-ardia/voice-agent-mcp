@@ -12,18 +12,35 @@
 // environment (the key is a dummy: the model never calls the network).
 
 import { join } from "node:path";
-import { createPinoLogger } from "../../dist/adapters/logging/pino-logger.js";
-import { createFileNoteStore } from "../../dist/adapters/persistence/file-note-store.js";
-import { nodeNoteFiles } from "../../dist/adapters/persistence/note-files.js";
-import { systemClock } from "../../dist/adapters/system/system-clock.js";
-import { systemIdGenerator } from "../../dist/adapters/system/system-id-generator.js";
-import { createAgentRunner } from "../../dist/app/agent/agent-runner.js";
-import { createHandlerLedger } from "../../dist/app/tools/handler-ledger.js";
-import { createToolExecutor } from "../../dist/app/tools/tool-executor.js";
-import { createToolRegistry } from "../../dist/app/tools/tool-registry.js";
-import { runCli } from "../../dist/entrypoints/cli.js";
-import { runUntilStopped } from "../../dist/entrypoints/interrupt.js";
-import { defineCreateNoteTool } from "../../dist/tools/create-note/create-note-tool.js";
+import { pathToFileURL } from "node:url";
+
+// dist/ exists only after a build, so it is loaded at run time (static analysis cannot resolve it).
+const load = async (relative) =>
+  import(pathToFileURL(join(import.meta.dirname, "..", "..", "dist", relative)).href);
+
+const { createPinoLogger } = await load("adapters/logging/pino-logger.js");
+
+const { createFileNoteStore } = await load("adapters/persistence/file-note-store.js");
+
+const { nodeNoteFiles } = await load("adapters/persistence/note-files.js");
+
+const { systemClock } = await load("adapters/system/system-clock.js");
+
+const { systemIdGenerator } = await load("adapters/system/system-id-generator.js");
+
+const { createAgentRunner } = await load("app/agent/agent-runner.js");
+
+const { createHandlerLedger } = await load("app/tools/handler-ledger.js");
+
+const { createToolExecutor } = await load("app/tools/tool-executor.js");
+
+const { createToolRegistry } = await load("app/tools/tool-registry.js");
+
+const { runCli } = await load("entrypoints/cli.js");
+
+const { runUntilStopped } = await load("entrypoints/interrupt.js");
+
+const { defineCreateNoteTool } = await load("tools/create-note/create-note-tool.js");
 
 const hold = process.argv[2];
 
