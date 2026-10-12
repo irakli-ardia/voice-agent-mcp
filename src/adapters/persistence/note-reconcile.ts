@@ -2,6 +2,7 @@ import { join } from "node:path";
 import { errorCodeOf, type FileIdentity, sameFile } from "./note-files.js";
 import { decodeRecord, MAX_RECORD_BYTES, noteIdFor } from "./note-record.js";
 import {
+  abortError,
   claimFrom,
   freeSlot,
   NOTE_FILE,
@@ -124,11 +125,20 @@ function tally(
   }
 }
 
-async function scanSlots(context: SlotContext, indexes: readonly number[]): Promise<SlotScan> {
+async function scanSlots(
+  context: SlotContext,
+  indexes: readonly number[],
+  signal: AbortSignal | undefined,
+): Promise<SlotScan> {
   const scan = { groups: new Map<string, SlotRecord[]>(), backing: [], unreadable: 0 };
   let reclaimed = 0;
 
   for (let start = 0; start < indexes.length; start += READ_BATCH) {
+    // Safe to stop between batches: nothing here has changed anything a repeat would not redo.
+    if (signal?.aborted === true) {
+      throw abortError();
+    }
+
     const batch = indexes.slice(start, start + READ_BATCH);
 
     for (const slot of await Promise.all(batch.map(async (index) => readSlot(context, index)))) {
@@ -275,7 +285,11 @@ async function accountLegacyNotes(
  * No step frees a record that backs a note, and every removal names a record by its unique name or
  * removes an empty directory, so recovery cannot let the store exceed its quota.
  */
-export async function reconcileSlots(context: SlotContext, cursor: SlotCursor): Promise<void> {
+export async function reconcileSlots(
+  context: SlotContext,
+  cursor: SlotCursor,
+  signal?: AbortSignal,
+): Promise<void> {
   const noteNames = (await context.files.listDirectory(context.notesDirectory))
     .filter((entry) => entry.isFile && NOTE_FILE.test(entry.name))
     .map((entry) => entry.name);
@@ -287,7 +301,7 @@ export async function reconcileSlots(context: SlotContext, cursor: SlotCursor): 
     .map((entry) => Number(entry.name))
     .sort((left, right) => left - right);
 
-  const { groups, backing, unreadable, reclaimed } = await scanSlots(context, indexes);
+  const { groups, backing, unreadable, reclaimed } = await scanSlots(context, indexes, signal);
   let published = 0;
   let removed = 0;
 

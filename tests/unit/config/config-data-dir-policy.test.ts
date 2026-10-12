@@ -38,6 +38,9 @@ describe("isExplicitAbsolutePath: Windows", () => {
     ["a star", "C:\\a*"],
     ["a quote", 'C:\\a"b'],
     ["a NUL byte", "C:\\notes\0"],
+    ["an NTFS stream name after the drive", "C:\\data\\notes:stream"],
+    ["a device namespace path", "\\\\.\\pipe\\notes"],
+    ["a device namespace drive path", "//./C:/notes"],
     ["a POSIX path", "/home/x/notes"],
   ])("rejects %s", (_name, value) => {
     expect(isExplicitAbsolutePath(value, "windows")).toBe(false);

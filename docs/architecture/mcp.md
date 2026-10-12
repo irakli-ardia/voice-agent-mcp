@@ -160,7 +160,8 @@ one client. Time comes from the server's monotonic clock.
 
 ## stdio and the process
 
-- **stdout carries MCP messages only.** Logs go to stderr as JSON lines (`LOG_LEVEL`). No banner or
+- **stdout carries MCP messages only.** Logs go to stderr as JSON lines (`LOG_LEVEL`). The
+  server never waits for stderr (see *Logging when stderr stalls* below). No banner or
   help text is ever written to stdout by the server (starting it through `npm run` or `npm start`
   adds npm's own banner, so clients should run `node` directly or use `npm --silent`), and `console` is not used in `src`; an architecture test and
   a real-process test enforce both. A line the SDK cannot parse, or a request whose envelope is invalid (for example a malformed `_meta`), is dropped with no JSON-RPC response and reported as the fixed event `mcp.transport_error`; the client must time out on its own, and the server keeps serving.
@@ -230,6 +231,50 @@ the same idempotency key is the safe way to find out what happened.
 the server cannot see an end of input while it has stopped reading, so with no signal and no
 closed pipe the process waits for the client. Once the client closes the pipe, or a stop signal
 arrives, the bound above applies.
+
+**`ask` and `tools` are bounded the same way.** The bin wraps them in `runUntilStopped`
+(`src/entrypoints/interrupt.ts`): the first SIGINT or SIGTERM aborts the turn (a cancelled turn exits 130,
+143 for SIGTERM), a second signal ends the process at once with the code of the first, and in every case
+the process is ended `COMMAND_SHUTDOWN_BOUND_MS` (2.5 s: the same 2 s grace plus 0.5 s slack) after the
+first signal or after the command finished, whichever came first, if it is still alive, with a line on
+stderr and the code the command had. Only the bin calls `process.exit`. What this does not do: `ask`
+does not wait on the handler ledger (the process simply lives until its event loop is empty or the
+bound), and the bound is a constant. It is tested in real processes on the built distribution with a
+stand-in command (`ask` itself needs a key and a network); on Windows only the finished-but-held case can
+be signalled, because Windows delivers no SIGINT or SIGTERM to a child.
+
+### Logging when stderr stalls
+
+A host may stop reading the server's stderr. Writing to a full pipe blocks on Windows, and a blocked
+write there stops the whole process or, from a thread-pool thread, stops it from ever exiting (both
+measured); with synchronous logging the server stopped answering after about 310 calls at `info`
+(audit finding F2). So `voice-agent mcp` logs through a bounded queue (`bounded-stderr.ts`):
+
+- **Never waits.** A line is queued and handed to the sink one at a time. On POSIX the sink is
+  `process.stderr`, which is asynchronous on a pipe. On Windows it is a small helper process
+  (`node -e`, started at the first line, given nothing but the lines, no environment) that does the
+  blocking write, so a stalled reader parks the helper and nothing else. The helper ignores SIGINT, is
+  ended with the server on every path tested (orderly end, forced exit, and the server being killed
+  outright, with the reader stalled or not), and is never restarted: if it fails or exits, later lines
+  are dropped and counted, with no new process.
+- **Bounded.** At most 64 KiB of lines wait, plus a 64 KiB reserve that only error-level lines (and
+  lines it cannot classify) may use; at most one write is outstanding. No timer, no promise, no listener
+  grows with the number of calls.
+- **Overflow policy: drop the newest, whole lines.** A line that does not fit is dropped and counted.
+  When the queue next empties, one `log.dropped` line (warn) with `droppedLines` and `droppedBytes`
+  is written. A line is never written in part.
+- **Not durable.** Lines wait in memory and are lost if stderr stays stalled, if the process is ended by
+  the forced-exit backstop first, or if it crashes. An orderly end waits at most `MCP_LOG_FLUSH_MS`
+  (250 ms) for the queue; if the reader is stalled the lines are lost and the end is not delayed more.
+  Logs are diagnostics: they carry fixed events and counts, never tool arguments or results, so a lost
+  line loses no data.
+- **Unchanged.** stdout carries only protocol messages; what the logger may contain is unchanged (see
+  [observability](observability.md)). `ask` and `tools` keep synchronous logging: their stderr is a
+  terminal or a pipe a person reads.
+- **Measured** (the built server, stderr pipe never read, `LOG_LEVEL=info`, calls sent as fast as they
+  are answered): 10 000 calls all answered on Windows and Linux, resident memory level (about 133 MB on
+  Windows; on Linux the same as with `LOG_LEVEL=silent`), the end 290 ms (Windows) and 510 ms (Linux)
+  after stdin closed, exit code 0.
 - **Transport failure:** an oversized message, or any transport error that closes the connection,
   logs the fixed events `mcp.transport_error` and `mcp.stopped` and exits 1, never 0. Stdin is
   released at the end, so the process does not hang.
@@ -246,7 +291,7 @@ before anything else is built or touched.
 
 - **Rule:** set, not empty or blank, and absolute for the platform it runs on. Windows: a drive and a
   separator (`C:\x`, `C:/x`), a UNC share, or a verbatim drive path (`\\?\C:\x`); never `\x` (the
-  current drive), `C:x` (a drive's current directory), or a path with `< > " | ? *`. POSIX: a leading
+  current drive), `C:x` (a drive's current directory), `\\.\` device paths, or a path with `< > " | ? * :` after the drive (`:` would name an NTFS stream). POSIX: a leading
   `/`. A NUL byte is never valid. `~` is not expanded. `..` segments are allowed in an absolute path
   (they resolve), and the value is never resolved against the working directory.
 - **Failure:** exit 78 and `Invalid configuration:` with `DATA_DIR: must be set to an absolute

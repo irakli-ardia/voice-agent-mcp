@@ -164,7 +164,13 @@ describe("dependency direction", () => {
       .map((file) => file.path);
 
     expect(consoleUsers).toEqual([]);
-    expect(streamUsers).toEqual(["src/entrypoints/voice-agent.ts"]);
+    // The bin owns the process streams. The one other match is the source text of the Windows log
+    // writer process (bounded-stderr.ts), which reads ITS stdin and writes ITS stderr; this process
+    // never touches stdout there.
+    expect([...streamUsers].sort()).toEqual([
+      "src/adapters/logging/bounded-stderr.ts",
+      "src/entrypoints/voice-agent.ts",
+    ]);
   });
 
   it("loads the MCP entrypoint lazily, and it reaches no OpenAI, agent, or speech module", () => {

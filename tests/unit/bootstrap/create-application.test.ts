@@ -193,3 +193,17 @@ describe("createApplication", () => {
     expect(result.ok ? "ok" : result.error.code).toBe("output_too_large");
   });
 });
+
+describe("createApplication logging", () => {
+  it("flushes at once when logging is synchronous", async () => {
+    await expect(createApplication(CONFIG).flushLogs(1_000)).resolves.toBeUndefined();
+  });
+
+  it("flushes the bounded stderr queue when logging is non-blocking", async () => {
+    const application = createApplication(CONFIG, { stderr: "non-blocking" });
+
+    // The test configuration is silent, so nothing is queued; flushing must still finish.
+    application.logger.info("create-application test: nothing is written at silent");
+    await expect(application.flushLogs(1_000)).resolves.toBeUndefined();
+  });
+});

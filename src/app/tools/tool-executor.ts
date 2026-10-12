@@ -182,13 +182,17 @@ function describeCause(cause: unknown): CauseDetails {
   }
 }
 
-/** A synchronous throw becomes a rejection, so the caller always has the handler's own promise. */
+/**
+ * A synchronous throw becomes a rejection, and a return value that is not a promise (a type
+ * violation the compiler cannot see at runtime) becomes a settled one, so the caller always has the
+ * handler's own promise and its ledger entry always ends.
+ */
 function invoke(
   handler: BoundToolHandler,
   context: Parameters<BoundToolHandler>[0],
 ): ReturnType<BoundToolHandler> {
   try {
-    return handler(context);
+    return Promise.resolve(handler(context));
   } catch (cause) {
     return Promise.reject(cause);
   }

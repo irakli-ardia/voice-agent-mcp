@@ -325,6 +325,20 @@ describe("createCallAdmission: logging", () => {
     expect(logger.entries[1]?.fields).toEqual({ refused: 10, callsPerSecond: 1 });
   });
 
+  it("throttles by the time since the last line, not by the time since the clock started", () => {
+    const { admission, logger, clock } = setup(1, 1);
+
+    clock.advance(60_000);
+    admitAndRelease(admission);
+
+    for (let refused = 0; refused < 5; refused += 1) {
+      admitAndRelease(admission);
+      clock.advance(100);
+    }
+
+    expect(logger.entries).toHaveLength(1);
+  });
+
   it("does not log one millisecond before the second is up", () => {
     const { admission, logger, clock } = setup(2, 1);
 

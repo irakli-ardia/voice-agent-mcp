@@ -1,7 +1,6 @@
 # Security
 
-Trust boundaries, action policy, and limits. The full threat model is `docs/threat-model.md`
-(M6).
+Trust boundaries, action policy, and limits. The threats and residual risks are summarised in the [threat model](../threat-model.md).
 
 ## The model is untrusted input
 
@@ -197,7 +196,11 @@ its slot ([decision 0013](../decisions/0013-note-quota-slots.md)).
   text. Nothing is written for it. The refusal is logged as `note_store.quota_exceeded` with the limit.
 - **Replays never need a slot:** a key whose note exists returns that note (or the stored note, for a
   conflicting replay), however full the store is. A normal write does no directory scan: the slots
-  are looked at once per process, and again only when a create finds the store full.
+  are looked at once per process, and again only when a create finds the store full. A pass that
+  finds its first slot taken lists the slot directory once; if every index below `MAX_NOTES` has a
+  slot, the store is full and no more renames are tried. (Trying every index instead took about
+  1.1 ms each on Windows: 11 s per refusal at the default limit, longer than `create_note`'s 5 s
+  deadline, so a full store never reported `note_quota_exceeded` there. Found in the M6 audit.)
 - **A write that loses the race to publish** (its link finds the note) frees its own slot at once,
   after checking that the note is not its own file. **A write whose link fails for any other reason**
   reports `storage_unavailable` and keeps its slot: the outcome is unknown, as it is for a crash at
@@ -227,7 +230,15 @@ when it exists at all; on POSIX, an empty target is replaced, which is a free sl
 file locks, process ids, or clocks agreeing between processes (clocks are only compared with file
 times, to decide when recovery may start work, never to decide who owns what).
 
-Known limits: quota refusal can be momentary, because racing creates of one key briefly hold a slot
+Known limits: a create that finds the store full also runs recovery, at most once in ten seconds per
+process, inside the call. It reads every slot, about 0.25 ms each on Windows (2.4 s at the default
+10 000). **Supported envelope:** `MAX_NOTES` up to 20 000 on Windows (measured at 10 000; the cost grows with the number of slots, so 20 000 is an estimate). Above
+that the recovery can outlast `create_note`'s 5 s deadline, and the call then reports `timed_out`
+instead of `note_quota_exceeded`. That is a performance limit, not a correctness one: the aborted call
+has written nothing (an abort stops the recovery between batches of 16 slots, and every recovery step
+is safe to stop and to repeat), so its "outcome unknown" is conservative, a retry is safe, the quota is
+never exceeded, and the stopped call does not stay behind as an abandoned handler. The cost is a
+timeout for one call in ten seconds while the store is full and large. Quota refusal can be momentary, because racing creates of one key briefly hold a slot
 each, and a refused call may succeed on retry. A `storage_unavailable` from a failed link may be
 followed by the note appearing later (see above); a persistently failing link leaves one slot per
 attempt until recovery can publish or free them. After a power loss the slot and the note are not
@@ -364,5 +375,46 @@ apply to it.
 
 ## Dependency security
 
-Committed lockfile, Dependabot, CodeQL (M6), `npm audit` as an informative check, minimal
-dependency count, no abandoned convenience packages without justification.
+Committed lockfile and `npm ci`, minimal dependency count, no abandoned convenience packages
+without justification, plus these CI controls:
+
+- **Pinned Actions.** Every `uses:` in `.github/workflows/` is a full 40-character commit SHA with
+  a `# vX.Y.Z` comment. A tag can be moved; a SHA cannot. Dependabot (`github-actions`, monthly)
+  proposes bumps. A hand-made pin must be checked with
+  `git ls-remote https://github.com/<owner>/<repo>.git "refs/tags/<tag>*"` (use the `^{}` line for an
+  annotated tag).
+- **Audit gate.** The `audit` job in `ci.yml` runs `npm audit --omit=dev --audit-level=high` and
+  fails on a high or critical advisory in production dependencies. No ignore list. Limits: it
+  reads the lockfile and the npm advisory database only; it skips devDependencies (which never
+  ship), moderate and low advisories, and unreported or zero-day flaws; it runs on pushes and PRs,
+  not on a schedule, so a new advisory fails the next run rather than raising an alert (Dependabot
+  alerts cover that).
+- **CodeQL.** `codeql.yml` analyses `javascript-typescript` (`build-mode: none`) on PRs, pushes to
+  `main`, and weekly. Permissions: `contents: read`, `security-events: write` for that job only;
+  no secrets. It is skipped for Dependabot PRs, whose token cannot upload results. Free for
+  public repositories; a private one needs GitHub Code Security.
+- **Least privilege.** `ci.yml` has `contents: read`, `merge-gate.yml` and `codeql.yml` default
+  to `{}`; checkouts use `persist-credentials: false`; untrusted PR fields reach scripts only
+  through `env`. No workflow uses secrets or `pull_request_target`.
+
+Not provable locally: that these workflows pass on GitHub, and that code scanning is enabled.
+
+### Owner-only repository settings
+
+Not settable from the repository; review them in GitHub → Settings:
+
+- **Rules → Rulesets** (or branch protection) for `main`: require a pull request, require status
+  checks `checks (22)`, `checks (24)`, `windows`, `audit`, `do-not-merge` (Merge gate), and
+  `analyze` (CodeQL) once each has run once, block force pushes and deletion; add required
+  reviews if there is more than one maintainer.
+- **Code security**: enable Dependency graph, Dependabot alerts, Dependabot security updates, and
+  Code scanning (the CodeQL workflow uploads to it).
+- **Actions → General**: default workflow token permissions "Read repository contents";
+  optionally "Allow actions created by GitHub" plus "Require actions to be pinned to a full-length
+  commit SHA".
+- **Dependabot** (`.github/dependabot.yml`) only opens PRs (npm weekly, Actions monthly, at most 5
+  open each). `openai` and `@modelcontextprotocol/*` are a separate group, so each bump is its own
+  PR. The file cannot require human approval or forbid auto-merge: leave auto-merge disabled and
+  review those PRs by hand.
+- **Private vulnerability reporting**: enable it (Settings → Code security) so the
+  [SECURITY.md](../../SECURITY.md) instructions work.

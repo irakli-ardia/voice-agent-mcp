@@ -405,7 +405,7 @@ describe("voice-agent mcp: transport limits and bad input", () => {
       expect((await toolResultOf(child, 2)).structuredContent).toEqual({ result: 2 });
       expect(child.responsesTo(1)).toEqual([]);
       await finish(child);
-      expect(child.stderrText()).toContain("mcp.transport_error");
+      await expect.poll(() => child.stderrText()).toContain("mcp.transport_error");
       expect(child.stderrText()).not.toContain(SENTINEL);
     });
   });
@@ -486,7 +486,7 @@ describe("voice-agent mcp: privacy over the real streams", () => {
       await child.whenResponse(4);
       await finish(child);
 
-      expect(child.stderrText().length).toBeGreaterThan(0);
+      await expect.poll(() => child.stderrText().length).toBeGreaterThan(0);
       expect(child.stderrText()).not.toContain(SENTINEL);
       expect(child.stdoutLines.join("\n")).not.toContain(SENTINEL);
       expect(child.stdoutLines.join("\n")).not.toContain(dir);
@@ -506,7 +506,7 @@ describe("voice-agent mcp: privacy over the real streams", () => {
 
       expect(failed.isError).toBe(true);
       expect(failed.content[0]?.text).toMatch(/^execution_failed: The note store is unavailable/);
-      expect(child.stderrText()).toContain("note_store.unavailable");
+      await expect.poll(() => child.stderrText()).toContain("note_store.unavailable");
       expect(child.stderrText()).not.toContain(SENTINEL);
       expect(child.stdoutLines.join("\n")).not.toContain(SENTINEL);
       await finish(child);

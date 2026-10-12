@@ -1,3 +1,6 @@
+# Dependabot only opens pull requests. It never merges, and this file cannot stop an owner-enabled
+# auto-merge rule or a reviewer from merging one: human review is a repository setting
+# (SECURITY.md, docs/architecture/security.md → Owner-only repository settings).
 version: 2
 updates:
   - package-ecosystem: npm
@@ -8,11 +11,21 @@ updates:
     commit-message:
       prefix: "chore(deps)"
     groups:
+      # The model and MCP SDKs get their own PR for every bump, major or not, because they define
+      # the trust boundary. Read the changelog and run the live and built-dist tests before merging.
+      sdk-manual-review:
+        patterns:
+          - "openai"
+          - "@modelcontextprotocol/*"
       minor-and-patch:
         update-types: [minor, patch]
+        exclude-patterns:
+          - "openai"
+          - "@modelcontextprotocol/*"
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: monthly
+    open-pull-requests-limit: 5
     commit-message:
       prefix: "ci"

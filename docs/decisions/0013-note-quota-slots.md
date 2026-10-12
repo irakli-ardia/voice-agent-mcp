@@ -38,7 +38,10 @@ by recovery.
 
 - The bound is exact and lock-free; a crash at any point loses nothing but a temp file or a claim
   being prepared, both removed once old.
-- A write costs a `mkdir`, a `link` and a `rename` more, and a probe; no scan.
+- A write costs a `mkdir`, a `link` and a `rename` more, and a probe; no scan. A refusal at a full
+  store costs one listing of the slot directory, plus a recovery pass at most every ten seconds;
+  trying every index with a refused `rename` was the first implementation and took 11 s per refusal on
+  Windows at 10 000 slots (found in the M6 audit, 2026-10-12).
 - Two designs were discarded after real-process tests and the S3 audit. A slot as a file freed by
   index: a late release could delete a slot freed and claimed again (eleven notes, ten slots). A slot
   as a directory made by `mkdir` and filled by `link`: a directory removed and made again under a

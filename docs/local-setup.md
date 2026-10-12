@@ -44,7 +44,7 @@ failure.
 Exit codes: 0 success, 64 usage error or unusable input (unreadable or unsupported audio, output
 file exists), 78 configuration error (including a missing key for `ask`), 69 a provider
 unavailable, 75 a deadline passed (turn or speech), 130 interrupted (Ctrl+C), 70 internal error,
-1 any other failure.
+1 any other failure. `ask` also exits 143 on SIGTERM; after the first Ctrl+C or SIGTERM the process is ended at most 2.5 s later, and a second signal ends it at once.
 
 ## Configuration
 

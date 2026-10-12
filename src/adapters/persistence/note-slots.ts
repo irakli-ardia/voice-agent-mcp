@@ -128,7 +128,7 @@ export function createNoteSlots(context: NoteSlotsOptions): NoteSlots {
       }
 
       lastReconcileAt = context.now();
-      await reconcileSlots(context, cursor);
+      await reconcileSlots(context, cursor, signal);
 
       const second = await claimFrom(context, cursor, source, signal);
 

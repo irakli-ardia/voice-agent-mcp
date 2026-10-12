@@ -1,3 +1,4 @@
+import { getEventListeners } from "node:events";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { PassThrough } from "node:stream";
@@ -11,6 +12,7 @@ import {
   serveMcp,
 } from "../../../src/bootstrap/serve-mcp.js";
 import type { JsonObject } from "../../../src/domain/json-value.js";
+import { createRecordingLogger } from "../../helpers/recording-logger.js";
 import { testConfig } from "../../helpers/test-config.js";
 
 const MODERN_META = {
@@ -190,6 +192,43 @@ describe("serveMcp", () => {
 
     expect(await ended).toBe("closed");
     expect(JSON.parse(io.lines[0] ?? "")).toMatchObject({ id: 7 });
+  });
+
+  it("reports a clean end as closed even after an earlier message the transport rejected", async () => {
+    const io = streams();
+    const logger = createRecordingLogger();
+
+    const ended = serveMcp(
+      { ...application(), logger },
+      { ...io, signal: new AbortController().signal },
+    );
+
+    // Valid JSON that is not a JSON-RPC message: the transport reports an error and carries on.
+    io.stdin.write('{"not":"a request"}\n');
+    await vi.waitFor(() =>
+      expect(logger.entries.some((entry) => entry.message === "mcp.transport_error")).toBe(true),
+    );
+
+    // A later turn: the earlier error is not part of how this connection ends.
+    io.send(toolsListRequest(9));
+    await io.whenLines(1);
+    io.stdin.end();
+
+    expect(await ended).toBe("closed");
+    expect(JSON.parse(io.lines[0] ?? "")).toMatchObject({ id: 9 });
+  });
+
+  it("listens for the stop request while serving and not after the connection ended", async () => {
+    const io = streams();
+    const stop = new AbortController();
+    const ended = serveMcp(application(), { ...io, signal: stop.signal });
+
+    expect(getEventListeners(stop.signal, "abort")).toHaveLength(1);
+
+    io.stdin.end();
+    await ended;
+
+    expect(getEventListeners(stop.signal, "abort")).toHaveLength(0);
   });
 
   it("closes the connection when asked to stop, even with stdin still open", async () => {

@@ -12,6 +12,7 @@ import {
   EXIT_TERMINATED,
   EXIT_USAGE,
 } from "./exit-codes.js";
+import type { StopSignalSource } from "./interrupt.js";
 
 type StopSignal = "SIGINT" | "SIGTERM";
 
@@ -22,11 +23,11 @@ type StopSignal = "SIGINT" | "SIGTERM";
  */
 export const MCP_FORCE_EXIT_SLACK_MS = 500;
 
-/** The part of `process` that delivers stop signals; tests pass an `EventEmitter`. */
-export interface StopSignalSource {
-  on(event: StopSignal, listener: () => void): void;
-  off(event: StopSignal, listener: () => void): void;
-}
+/**
+ * The longest an orderly end waits for queued log lines to reach stderr. It is well inside
+ * `MCP_FORCE_EXIT_SLACK_MS`, and a stalled stderr costs exactly this and then loses the lines.
+ */
+export const MCP_LOG_FLUSH_MS = 250;
 
 /** Process I/O handed in by the bin, so the server runs in tests on plain streams. */
 export interface McpStdioIo {
@@ -76,7 +77,8 @@ const SIGNAL_EXIT: Readonly<Record<StopSignal, number>> = {
 export async function runMcpStdio(
   argv: readonly string[],
   io: McpStdioIo,
-  create: (config: Config) => Application = createApplication,
+  create: (config: Config) => Application = (loaded) =>
+    createApplication(loaded, { stderr: "non-blocking" }),
   serve: typeof serveMcp = serveMcp,
 ): Promise<number> {
   if (argv.length > 0) {
@@ -170,5 +172,9 @@ export async function runMcpStdio(
     // message) would otherwise keep the process alive indefinitely; destroying it releases the
     // handle, and the process ends when its remaining work does.
     io.stdin.destroy();
+
+    // Last, and bounded: a host that reads stderr gets the final lines; one that does not costs
+    // this much and loses them.
+    await application?.flushLogs(MCP_LOG_FLUSH_MS);
   }
 }

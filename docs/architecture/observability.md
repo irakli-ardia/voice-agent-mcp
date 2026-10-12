@@ -5,7 +5,9 @@ Structured logging and timing events.
 ## Logging
 
 - pino behind the `Logger` port (`src/ports/logger.ts` → `src/adapters/logging/pino-logger.ts`).
-- JSON lines to **stderr** in every process (stdout is reserved for command output and MCP
+- JSON lines to **stderr** in every process, written synchronously by `ask` and `tools` and through a
+  bounded, non-blocking queue by `voice-agent mcp` ([MCP](mcp.md#logging-when-stderr-stalls); a stalled
+  stderr drops lines and says so) (stdout is reserved for command output and MCP
   protocol traffic). Synchronous destination, so nothing is lost on exit.
 - Messages are constant dotted event names (`turn.started`, `tool.timed_out`); data goes in fields.
 - Known secret fields are redacted (`apiKey`, `authorization`, `OPENAI_API_KEY`, one level deep).

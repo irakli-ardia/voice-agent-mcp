@@ -394,8 +394,45 @@ describe("note quota: no scan on a normal write", () => {
       await store.create(draft(index), live());
     }
 
-    // One reconcile lists the notes, the slots, and the one slot; later refusals list nothing.
-    expect(listings - before).toBeLessThanOrEqual(3);
+    // One reconcile lists the notes, the slots, and the one slot, and each of the two passes around
+    // it lists the slots once to see that the store is full; later refusals list nothing.
+    expect(listings - before).toBeLessThanOrEqual(5);
+  });
+
+  it("recognises a full store with one listing, not one refused rename per slot", async () => {
+    let renames = 0;
+    let listings = 0;
+    const limit = 40;
+
+    const store = open(limit, {
+      ...nodeNoteFiles,
+      rename: async (from, to) => {
+        renames += 1;
+
+        return nodeNoteFiles.rename(from, to);
+      },
+      listDirectory: async (path) => {
+        listings += 1;
+
+        return nodeNoteFiles.listDirectory(path);
+      },
+    });
+
+    for (let index = 0; index < limit; index += 1) {
+      expect((await store.create(draft(index), live())).status).toBe("created");
+    }
+
+    renames = 0;
+    listings = 0;
+
+    expect((await store.create(draft(limit), live())).status).toBe("quota_exceeded");
+
+    // Trying every slot would be `limit` renames per pass; the cost of a refusal must not grow with
+    // the quota (about a millisecond per slot on Windows: 11 s at the default quota, past the tool's deadline).
+    expect(renames).toBeLessThanOrEqual(2);
+    // And it asks once per pass, not after every refused rename: the reconcile that a full store
+    // runs lists every slot once (40) and the notes and slots once each; the two passes list once each.
+    expect(listings).toBeLessThanOrEqual(limit + 8);
   });
 });
 
@@ -570,6 +607,22 @@ describe("note quota: claims being prepared", () => {
     await open(1).create(draft(1), live());
 
     expect(await readdir(slots)).not.toContain(PREPARED);
+    expect(logger.entries).toContainEqual({
+      level: "info",
+      message: "note_store.temp_swept",
+      fields: { removed: 1 },
+    });
+  });
+
+  it("lose only their own record when swept: anything else in the directory stays, and so does the directory", async () => {
+    await mkdir(notes, { recursive: true });
+    await plantPrepared();
+    await writeFile(join(slots, PREPARED, "foreign.txt"), "not ours");
+    offsetMs = TEMP_MAX_AGE_MS * 2;
+
+    await open(1).create(draft(1), live());
+
+    expect(await readdir(join(slots, PREPARED))).toEqual(["foreign.txt"]);
   });
 
   it("are kept while young", async () => {
@@ -754,6 +807,120 @@ describe("note quota: crashed writers", () => {
     expect(await slotNames()).toEqual(["0"]);
   });
 
+  it("counts a slot record that cannot be read as unreadable, and publishes nothing from it", async () => {
+    await mkdir(notes, { recursive: true });
+    await plantPendingSlot(7, 0);
+    offsetMs = ROLL_FORWARD_AFTER_MS * 2;
+
+    const store = open(3, {
+      ...nodeNoteFiles,
+      readAtMost: async (path, maxBytes, signal) => {
+        if (path.startsWith(slots)) {
+          throw Object.assign(new Error("denied"), { code: "EACCES" });
+        }
+
+        return nodeNoteFiles.readAtMost(path, maxBytes, signal);
+      },
+    });
+
+    await store.create(draft(8), live());
+
+    expect(logger.entries).toContainEqual({
+      level: "info",
+      message: "note_store.reconciled",
+      fields: { published: 0, removed: 0, accounted: 0, unaccounted: 0, unreadable: 1 },
+    });
+    expect(await store.read(noteIdFor(key(7)), live())).toEqual({ status: "not_found" });
+  });
+
+  it("looks at the slot directory once per pass, however many slots it finds taken before a free one", async () => {
+    const limit = 40;
+
+    await mkdir(notes, { recursive: true });
+
+    for (let index = 0; index < limit; index += 1) {
+      if (index !== 20) {
+        await plantPendingSlot(index, index);
+      }
+    }
+
+    let slotListings = 0;
+
+    const store = open(limit, {
+      ...nodeNoteFiles,
+      listDirectory: async (path) => {
+        slotListings += path === slots ? 1 : 0;
+
+        return nodeNoteFiles.listDirectory(path);
+      },
+    });
+
+    expect(await store.create(draft(99), live())).toEqual(
+      expect.objectContaining({ status: "created" }),
+    );
+    expect(await slotNames()).toHaveLength(limit);
+    // Preparing the store lists the slots a few times; the pass that found 20 slots taken adds one.
+    expect(slotListings).toBeLessThanOrEqual(6);
+  });
+
+  it("stops the recovery a full store runs when the call is aborted, instead of reading every slot", async () => {
+    const limit = 64;
+
+    await mkdir(notes, { recursive: true });
+
+    for (let index = 0; index < limit; index += 1) {
+      await plantPendingSlot(index, index);
+    }
+
+    const stop = new AbortController();
+    let slotReads = 0;
+    let armed = false;
+
+    const store = open(limit, {
+      ...nodeNoteFiles,
+      listDirectory: async (path) => {
+        if (armed && path.startsWith(slots) && path !== slots) {
+          slotReads += 1;
+          stop.abort();
+        }
+
+        return nodeNoteFiles.listDirectory(path);
+      },
+    });
+
+    // Young pending records are never published, so the store is full: the first refusal prepares
+    // the store and runs the recovery once.
+    expect(await store.create(draft(1_000), live())).toEqual({ status: "quota_exceeded" });
+
+    // Later the recovery is due again. This time the call is aborted as it starts reading slots.
+    offsetMs += 60_000;
+    armed = true;
+
+    await expect(store.create(draft(1_001), stop.signal)).rejects.toMatchObject({
+      name: "AbortError",
+    });
+    // One batch of 16 slots had been started; the other 48 were never read.
+    expect(slotReads).toBeLessThanOrEqual(16);
+    expect(slotReads).toBeGreaterThan(0);
+  });
+
+  it("does not take a slot directory at or above the limit for a full store", async () => {
+    // A store whose limit was lowered can hold a slot named like the new limit. Slots 0 and 1 are
+    // taken, 2 is free, and a pending record sits in slot 3: three directories, but not every index
+    // below the limit of 3, so a create still gets slot 2.
+    await mkdir(notes, { recursive: true });
+    await plantPendingSlot(0, 0);
+    await plantPendingSlot(1, 1);
+    await plantPendingSlot(2, 3);
+
+    const store = open(3);
+
+    expect(await store.create(draft(9), live())).toEqual(
+      expect.objectContaining({ status: "created" }),
+    );
+    expect(await slotNames()).toEqual(["0", "1", "2", "3"]);
+  });
+
   it("lets the retry of a crashed write commit it once, and frees the stale slot as surplus", async () => {
     await mkdir(notes, { recursive: true });
     await plantPendingSlot(7, 0);
@@ -827,6 +994,11 @@ describe("note quota: crashed writers", () => {
     expect(await noteFiles()).toHaveLength(2);
     expect(await slotNames()).toHaveLength(2);
     await expectEveryNoteBacked();
+    expect(logger.entries).toContainEqual({
+      level: "info",
+      message: "note_store.reconciled",
+      fields: { published: 1, removed: 1, accounted: 0, unaccounted: 0, unreadable: 0 },
+    });
   });
 
   it("removes an empty slot directory, which only a release interrupted before its last step leaves", async () => {
@@ -838,6 +1010,28 @@ describe("note quota: crashed writers", () => {
     );
     expect(await slotNames()).toEqual(["0"]);
     await expectEveryNoteBacked();
+    expect(logger.entries).toContainEqual({
+      level: "info",
+      message: "note_store.reconciled",
+      fields: { published: 0, removed: 1, accounted: 0, unaccounted: 0, unreadable: 0 },
+    });
+  });
+
+  it("does not count or touch a claim being prepared when it removes an empty slot directory", async () => {
+    const preparing = join(slots, ".claim-11111111-2222-3333-4444-555555555555");
+
+    await mkdir(join(slots, "0"), { recursive: true });
+    await mkdir(preparing);
+    await mkdir(notes, { recursive: true });
+
+    await open(2).create(draft(0), live());
+
+    expect(logger.entries).toContainEqual({
+      level: "info",
+      message: "note_store.reconciled",
+      fields: { published: 0, removed: 1, accounted: 0, unaccounted: 0, unreadable: 0 },
+    });
+    expect((await lstat(preparing)).isDirectory()).toBe(true);
   });
 
   it("never touches a slot that is not a valid record", async () => {
@@ -849,9 +1043,11 @@ describe("note quota: crashed writers", () => {
 
     expect(await store.create(draft(0), live())).toEqual({ status: "quota_exceeded" });
     expect(await readFile(join(slots, "0", RECORD_ID), "utf8")).toBe("not a record");
-    expect(logger.entries).toContainEqual(
-      expect.objectContaining({ message: "note_store.reconciled" }),
-    );
+    expect(logger.entries).toContainEqual({
+      level: "info",
+      message: "note_store.reconciled",
+      fields: { published: 0, removed: 0, accounted: 0, unaccounted: 0, unreadable: 1 },
+    });
   });
 
   it("is idempotent: reconciling twice changes nothing the first did not", async () => {

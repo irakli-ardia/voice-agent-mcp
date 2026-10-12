@@ -111,8 +111,11 @@ export interface LoadConfigOptions {
   readonly dataDir?: "default" | "explicit-absolute";
 }
 
-/** Characters no Windows path component may contain. */
-const WINDOWS_ILLEGAL = /[<>"|?*]/;
+/** Characters no Windows path component may contain; `:` after the drive names an NTFS stream. */
+const WINDOWS_ILLEGAL = /[<>"|?*:]/;
+
+/** `\\.\`: the device namespace (`\\.\pipe\x`), which is not a directory on a disk. */
+const DEVICE_NAMESPACE = /^[\\/]{2}\.[\\/]/;
 
 /** `C:\` or `C:/`: a drive and a separator, so not the current directory of a drive (`C:x`). */
 const DRIVE_ROOT = /^[A-Za-z]:[\\/]$/;
@@ -140,6 +143,10 @@ export function isExplicitAbsolutePath(value: string, flavor: "windows" | "posix
 
   if (VERBATIM_DRIVE.test(value)) {
     return !WINDOWS_ILLEGAL.test(value.slice(6));
+  }
+
+  if (DEVICE_NAMESPACE.test(value)) {
+    return false;
   }
 
   const { root } = win32.parse(value);

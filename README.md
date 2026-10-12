@@ -57,7 +57,9 @@ voice-agent mcp                                                      # serve tho
   non-zero. Before an answer exists, a failure leaves stdout empty.
 - **Exit codes:** 0 success · 64 usage or unusable input (unreadable or unsupported audio, output
   file exists) · 69 a provider unavailable · 70 internal error · 75 a deadline passed · 78
-  configuration (including a missing `OPENAI_API_KEY`) · 130 interrupted · 1 any other failure.
+  configuration (including a missing `OPENAI_API_KEY`) · 130 interrupted (Ctrl+C or SIGINT) · 143 SIGTERM · 1 any other failure.
+  A first signal cancels the turn; a second ends the process at once; whatever happens, the process is ended
+  2.5 s after the first signal if it is still alive.
   `voice-agent mcp` has its own exit codes, listed [below](#the-mcp-server).
 
 Tools today: `get_current_time`, `calculate`, and `create_note` / `read_note` on a file-backed,
@@ -166,7 +168,7 @@ tool is the JSON-RPC error -32602.
 | `MAX_TOOL_RESULT_BYTES` | 16384 | Largest JSON result of one call, in UTF-8 bytes |
 | `MAX_NOTES` | 10000 (1–1000000) | The most notes the store holds, across every process sharing `DATA_DIR`; a new note over it fails with `note_quota_exceeded`, a saved note is still returned |
 | `DATA_DIR` | `.data` (`ask`, `tools`); **required, absolute** for `mcp` | Where notes are stored. `voice-agent mcp` exits 78 if it is unset, empty, or relative |
-| `LOG_LEVEL` | `info` | Logs go to stderr; `silent` hides them |
+| `LOG_LEVEL` | `info` | Logs go to stderr; `silent` hides them. The MCP server never waits for stderr: if the host stops reading it, log lines are dropped (counted in a `log.dropped` line) and the server keeps answering |
 
 An invalid value exits with code 78, naming the variable and never its value. Fixed in code: the
 1 MiB limit on one inbound message.

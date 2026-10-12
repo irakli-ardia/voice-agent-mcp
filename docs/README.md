@@ -5,6 +5,7 @@
 | [Architecture](architecture/README.md) | Shape, layer rules, request path, and the topic docs (tool system, agent loop, audio, MCP, security, observability, invariants, glossary) |
 | [Decisions](decisions/README.md) | Why the hard-to-reverse choices were made |
 | [Coding standards](coding-standards.md) | TypeScript rules, where code goes, naming |
+| [Threat model](threat-model.md) | Assets, trust, threats, mitigations, and residual risk |
 | [Testing](testing.md) | Test layout, commands, what counts as verified |
 | [Local setup](local-setup.md) | Prerequisites, first run, running the CLI |
 

@@ -54,7 +54,7 @@ export interface SlotClaim {
   readonly record: string;
 }
 
-function abortError(): DOMException {
+export function abortError(): DOMException {
   return new DOMException("The note store operation was aborted.", "AbortError");
 }
 
@@ -182,6 +182,25 @@ interface Pass {
   readonly unclear: readonly number[];
 }
 
+/**
+ * Whether every index below `maxNotes` already has a slot directory: one listing instead of one
+ * refused rename per slot. A full store is otherwise discovered by trying every index, which costs
+ * about a millisecond each on Windows, so a refusal at the default quota took longer than the tool's
+ * deadline and was never reported as a refusal. A slot directory that is only empty counts here and
+ * is not taken, so this can call a store full that a retry finds room in, never the reverse.
+ */
+async function everySlotExists(context: SlotContext): Promise<boolean> {
+  let count = 0;
+
+  for (const entry of await context.files.listDirectory(context.slotDirectory)) {
+    if (entry.isDirectory && SLOT_NAME.test(entry.name) && Number(entry.name) < context.maxNotes) {
+      count += 1;
+    }
+  }
+
+  return count >= context.maxNotes;
+}
+
 /** One pass over every index, starting at the cursor, renaming the prepared claim to the first free slot. */
 async function passOver(
   context: SlotContext,
@@ -194,6 +213,7 @@ async function passOver(
   const start = cursor.next;
   const unclear: number[] = [];
   let taken = 0;
+  let storeIsFull: Promise<boolean> | undefined;
 
   for (let step = 0; step < context.maxNotes; step += 1) {
     if (signal?.aborted === true) {
@@ -207,10 +227,19 @@ async function passOver(
       return { index, taken, unclear };
     }
 
-    taken += attempt === "taken" ? 1 : 0;
-
     if (attempt === "unclear") {
       unclear.push(index);
+
+      continue;
+    }
+
+    taken += 1;
+
+    // The first slot found taken is the sign of a store that may be full: ask once per pass.
+    storeIsFull ??= everySlotExists(context);
+
+    if (await storeIsFull) {
+      return { taken, unclear };
     }
   }
 

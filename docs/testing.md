@@ -97,6 +97,8 @@ Four layers, each proving what the one before cannot:
    (`tests/integration/mcp-server*.test.ts`, `mcp-idempotency`, `mcp-cancellation-side-effects`,
    `mcp-privacy`, `mcp-result-bounds`, `mcp-resource-bounds`). That transport passes objects by
    reference, so agreement between `structuredContent` and the text is only proven on a real wire.
+   `m6-cross-slice` runs the real note store under cancellation, the quota, and shutdown together:
+   the per-feature suites use fakes for the store, so these interactions are only proven there.
 2. **Plain streams:** the composition and the entrypoint on `PassThrough` streams
    (`tests/unit/bootstrap/serve-mcp.test.ts`, `tests/unit/entrypoints/mcp-stdio.test.ts`): exit codes,
    signals, listeners, the 1 MiB limit.

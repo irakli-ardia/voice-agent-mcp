@@ -398,6 +398,7 @@ function recordingComposition(replies: readonly FakeReply[], logger: RecordingLo
       return {
         config,
         logger,
+        flushLogs: async () => undefined,
         tools,
         handlerLedger,
         executeTool: createToolExecutor({
