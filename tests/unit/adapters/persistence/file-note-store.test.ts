@@ -352,10 +352,14 @@ describe("file note store: storage failures", () => {
   });
 
   it("reports unavailable when the record vanishes between EEXIST and the read", async () => {
-    const outcome = await store({ ...nodeNoteFiles, link: failingWith("EEXIST") }).create(
-      draft(),
-      live(),
-    );
+    // Only the link to the note's name reports EEXIST: a slot is claimed by the same primitive.
+    const outcome = await store({
+      ...nodeNoteFiles,
+      link: async (existingPath, newPath) =>
+        newPath.endsWith(".json")
+          ? failingWith("EEXIST")()
+          : nodeNoteFiles.link(existingPath, newPath),
+    }).create(draft(), live());
 
     expect(outcome).toEqual({ status: "unavailable" });
     expect(logger.entries).toEqual([
@@ -472,7 +476,10 @@ describe("file note store: cancellation", () => {
       ...nodeNoteFiles,
       link: async (existingPath, newPath) => {
         await nodeNoteFiles.link(existingPath, newPath);
-        caller.abort();
+
+        if (newPath.endsWith(".json")) {
+          caller.abort();
+        }
       },
     });
 

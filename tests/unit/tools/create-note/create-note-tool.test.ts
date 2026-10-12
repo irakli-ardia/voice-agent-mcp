@@ -233,6 +233,12 @@ describe("create_note: store failures", () => {
         "request is safe.",
     ],
     [
+      { status: "quota_exceeded" },
+      "note_quota_exceeded",
+      "The note store is full; this call did not save the note. Existing notes can still be " +
+        "read, and retrying a request that was already saved returns it.",
+    ],
+    [
       { status: "unreadable" },
       "note_unreadable",
       "A note already exists for this request but cannot be read.",

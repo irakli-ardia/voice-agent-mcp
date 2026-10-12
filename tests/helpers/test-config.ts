@@ -5,6 +5,8 @@ export function testConfig(overrides: Partial<Config> & Pick<Config, "dataDir">)
   return {
     logLevel: "silent",
     maxToolResultBytes: 16_384,
+    maxAbandonedToolHandlers: 3,
+    maxNotes: 10_000,
     agent: {
       maxIterations: 8,
       maxToolCallsPerTurn: 16,
@@ -22,7 +24,7 @@ export function testConfig(overrides: Partial<Config> & Pick<Config, "dataDir">)
       ttsVoice: "marin",
     },
     speech: { timeoutMs: 180_000 },
-    mcp: { maxInFlightCalls: 16 },
+    mcp: { maxInFlightCalls: 16, maxCallsPerSecond: 20 },
     ...overrides,
   };
 }

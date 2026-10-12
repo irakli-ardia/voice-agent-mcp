@@ -121,6 +121,7 @@ function create(config) {
       clock: systemClock,
       logger: production.logger,
       maxResultBytes: config.maxToolResultBytes,
+      handlerLedger: production.handlerLedger,
     }),
   };
 }
@@ -134,6 +135,10 @@ const code = await runMcpStdio(
       process.stderr.write(text);
     },
     signals: process,
+    // As the bin does it: a write that never ends must not keep the process alive.
+    forceExit: (exitCode) => {
+      process.exit(exitCode);
+    },
   },
   create,
 );

@@ -76,7 +76,8 @@ has loaded its credentials. Speech is composed the same way: `create-transcriber
 bundles these factories; the CLI takes a
 composition as a parameter, so tests supply a fake model there instead of through flags,
 environment switches, or globals. Tests build services with fakes the same way. Shutdown ownership
-(`src/bootstrap/shutdown.ts`, planned M6) lives beside it.
+lives beside it: `serveMcp` runs the bounded wait, and only the bin may end the process
+([MCP](mcp.md#shutdown)).
 
 ## Adding a port and adapter
 

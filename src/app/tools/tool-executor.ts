@@ -1,4 +1,5 @@
 import type { z } from "zod";
+import { ConfirmationGrant } from "../../domain/confirmation-grant.js";
 import type { JsonObject } from "../../domain/json-value.js";
 import { err, ok, type Result } from "../../domain/result.js";
 import {
@@ -15,6 +16,12 @@ import type {
   ToolDefinition,
   ToolFailure,
 } from "../../tools/tool-definition.js";
+import {
+  createHandlerLedger,
+  DEFAULT_MAX_ABANDONED_TOOL_HANDLERS,
+  type HandlerEntry,
+  type HandlerLedger,
+} from "./handler-ledger.js";
 import { TOOL_CALL_ID_PATTERN } from "./tool-call-id.js";
 import { TOOL_NAME_PATTERN, type ToolRegistry } from "./tool-registry.js";
 
@@ -36,6 +43,12 @@ export interface ToolExecutorDependencies {
    * it does not bound memory a handler allocates before its output is validated.
    */
   readonly maxResultBytes: number;
+  /**
+   * Counts handlers until they really settle and refuses new calls while too many abandoned ones
+   * are still running. Optional so a caller that never shuts down needs no wiring: the executor
+   * then owns a private ledger with the default limit. Share one to observe `idle()`.
+   */
+  readonly handlerLedger?: HandlerLedger;
 }
 
 /** Fixed public messages; the other two codes carry a message built for the call. */
@@ -44,6 +57,7 @@ const MESSAGES = {
   confirmation_required: "This tool requires confirmation from the user, which was not given.",
   cancelled: "The tool call was cancelled; its outcome is unknown.",
   timed_out: "The tool did not finish within its time limit; its outcome is unknown.",
+  overloaded: "Too many earlier tool calls are still running; retry later.",
   internal_error: "The tool failed unexpectedly.",
   invalid_output: "The tool produced an invalid result.",
   output_too_large: "The tool result is too large to return.",
@@ -168,6 +182,18 @@ function describeCause(cause: unknown): CauseDetails {
   }
 }
 
+/** A synchronous throw becomes a rejection, so the caller always has the handler's own promise. */
+function invoke(
+  handler: BoundToolHandler,
+  context: Parameters<BoundToolHandler>[0],
+): ReturnType<BoundToolHandler> {
+  try {
+    return handler(context);
+  } catch (cause) {
+    return Promise.reject(cause);
+  }
+}
+
 /**
  * Invokes the handler and waits for it, the deadline, or the caller's signal. Precedence is
  * decided from the abort flags once waiting ends, never from which promise won the race:
@@ -179,6 +205,7 @@ async function settle(
   tool: ToolDefinition,
   callerSignal: AbortSignal,
   clock: Clock,
+  entry: HandlerEntry,
 ): Promise<Settlement> {
   const deadline = new AbortController();
   const timer = setTimeout(() => deadline.abort(), tool.timeoutMs);
@@ -196,19 +223,33 @@ async function settle(
   try {
     // A rejection becomes a settlement too, so the precedence below also covers a handler that
     // rejects; the race's subscription keeps a rejection after we stop waiting from going unhandled.
-    const handled = handler({ signal, clock }).then(
-      (value): HandlerSettlement => ({ status: "returned", value }),
-      (cause: unknown): HandlerSettlement => ({ status: "threw", details: describeCause(cause) }),
+    // The ledger entry ends with the handler's own promise, never with this function's result.
+    const handled = invoke(handler, { signal, clock }).then(
+      (value): HandlerSettlement => {
+        entry.settle();
+
+        return { status: "returned", value };
+      },
+      (cause: unknown): HandlerSettlement => {
+        entry.settle();
+
+        return { status: "threw", details: describeCause(cause) };
+      },
     );
 
     const first = await Promise.race([handled, aborted.promise]);
 
+    // A no-op when the handler already settled, so a same-turn settlement is never "abandoned".
     if (callerSignal.aborted) {
+      entry.abandon();
+
       return { status: "cancelled", late: handled };
     }
 
     // "aborted" without the caller's flag can only mean the deadline; the check narrows `first`.
     if (deadline.signal.aborted || first === "aborted") {
+      entry.abandon();
+
       return { status: "timed_out", late: handled };
     }
 
@@ -252,48 +293,107 @@ function validateOutput(
   return { result: ok(output.data), handlerInvoked: true, details: {} };
 }
 
+/**
+ * Registers the handler with the ledger, invokes it, and turns how the wait ended into an outcome.
+ * A call refused by the ledger never invokes the handler. Any throw here happened after the
+ * handler was invoked, so it is reported as such.
+ */
+async function invokeHandler(
+  bound: BoundToolHandler,
+  tool: ToolDefinition,
+  signal: AbortSignal,
+  dependencies: ToolExecutorDependencies,
+  ledger: HandlerLedger,
+  onAdmitted: () => void,
+): Promise<Outcome> {
+  const entry = ledger.enter();
+
+  if (entry === undefined) {
+    return failed("overloaded", false, { abandonedHandlers: ledger.counts().abandoned });
+  }
+
+  // Nothing awaits between the confirmation check and here, so the grant checked is the grant spent.
+  onAdmitted();
+
+  try {
+    const settlement = await settle(bound, tool, signal, dependencies.clock, entry);
+
+    switch (settlement.status) {
+      case "cancelled":
+      case "timed_out":
+        return { ...failed(settlement.status, true), late: settlement.late };
+      case "threw":
+        return failed("internal_error", true, settlement.details);
+      case "returned":
+        return validateOutput(tool, settlement.value, dependencies.maxResultBytes);
+    }
+  } catch (cause) {
+    return failed("internal_error", true, describeCause(cause));
+  }
+}
+
+type ConfirmationCheck =
+  | { readonly status: "granted"; readonly grant: ConfirmationGrant }
+  | { readonly status: "denied"; readonly reason: "missing" | "rejected" };
+
+/**
+ * `missing`: the call carries no grant. `rejected`: it carries something that is not a usable grant
+ * for this call: not an instance, made for another call, or already spent. Neither reveals more.
+ */
+function checkConfirmation(call: ToolCall): ConfirmationCheck {
+  const { confirmation } = call;
+
+  if (confirmation === undefined) {
+    return { status: "denied", reason: "missing" };
+  }
+
+  return confirmation instanceof ConfirmationGrant && confirmation.covers(call)
+    ? { status: "granted", grant: confirmation }
+    : { status: "denied", reason: "rejected" };
+}
+
 async function run(
   tool: ToolDefinition,
   call: ToolCall,
   signal: AbortSignal,
   dependencies: ToolExecutorDependencies,
+  ledger: HandlerLedger,
 ): Promise<Outcome> {
-  let handlerInvoked = false;
-
   try {
     const bound = tool.bindArguments(call);
 
     if (!bound.ok) {
       return {
         result: err({ code: "invalid_input", message: describeInputIssues(bound.error) }),
-        handlerInvoked,
+        handlerInvoked: false,
         details: { issueCount: bound.error.length },
       };
     }
 
-    // Policy. No host confirmation channel exists yet (M6), so confirmation fails closed.
-    if (tool.requiresConfirmation) {
-      return failed("confirmation_required", handlerInvoked);
+    // Policy. A tool that requires confirmation runs only with a host-issued grant for this very
+    // call; anything else, including no grant at all, is refused before anything can happen.
+    const confirmation = tool.requiresConfirmation ? checkConfirmation(call) : undefined;
+
+    if (confirmation?.status === "denied") {
+      return failed("confirmation_required", false, { confirmation: confirmation.reason });
     }
 
     if (signal.aborted) {
-      return failed("cancelled", handlerInvoked);
+      return failed("cancelled", false);
     }
 
-    handlerInvoked = true;
-    const settlement = await settle(bound.value, tool, signal, dependencies.clock);
+    // Past the policy and cancellation checks, so a call refused here is refused for the ledger
+    // alone, and one cancelled before invocation never enters it. A grant is spent only once the
+    // ledger has admitted the handler, so an overloaded refusal does not use it up.
+    const outcome = await invokeHandler(bound.value, tool, signal, dependencies, ledger, () => {
+      void confirmation?.grant.consume(call);
+    });
 
-    switch (settlement.status) {
-      case "cancelled":
-      case "timed_out":
-        return { ...failed(settlement.status, handlerInvoked), late: settlement.late };
-      case "threw":
-        return failed("internal_error", handlerInvoked, settlement.details);
-      case "returned":
-        return validateOutput(tool, settlement.value, dependencies.maxResultBytes);
-    }
+    return confirmation !== undefined && outcome.handlerInvoked
+      ? { ...outcome, details: { ...outcome.details, confirmation: "granted" } }
+      : outcome;
   } catch (cause) {
-    return failed("internal_error", handlerInvoked, describeCause(cause));
+    return failed("internal_error", false, describeCause(cause));
   }
 }
 
@@ -384,6 +484,10 @@ function watchLateSettlement(
  * `tool.settled_late` if a handler finishes after the executor stopped waiting.
  */
 export function createToolExecutor(dependencies: ToolExecutorDependencies): ToolExecutor {
+  const ledger =
+    dependencies.handlerLedger ??
+    createHandlerLedger({ maxAbandoned: DEFAULT_MAX_ABANDONED_TOOL_HANDLERS });
+
   return async (
     call: ToolCall,
     signal: AbortSignal,
@@ -394,7 +498,7 @@ export function createToolExecutor(dependencies: ToolExecutorDependencies): Tool
     const outcome =
       tool === undefined
         ? failed("unknown_tool", false)
-        : await run(tool, call, signal, dependencies);
+        : await run(tool, call, signal, dependencies, ledger);
 
     log(dependencies.logger, call, tool, outcome, dependencies.clock.monotonicNow() - startedAt);
 

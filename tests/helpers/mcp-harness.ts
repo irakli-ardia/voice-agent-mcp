@@ -1,6 +1,8 @@
 import { Client } from "@modelcontextprotocol/client";
 import { InMemoryTransport, type Server } from "@modelcontextprotocol/server";
+import { type CallAdmission, createCallAdmission } from "../../src/adapters/mcp/call-admission.js";
 import { createMcpServer } from "../../src/adapters/mcp/create-mcp-server.js";
+import type { HandlerLedger } from "../../src/app/tools/handler-ledger.js";
 import { createToolExecutor, type ToolExecutor } from "../../src/app/tools/tool-executor.js";
 import { createToolRegistry } from "../../src/app/tools/tool-registry.js";
 import type { Clock } from "../../src/ports/clock.js";
@@ -14,8 +16,14 @@ import { createRecordingLogger, type RecordingLogger } from "./recording-logger.
 export interface McpHarnessOptions {
   readonly tools: readonly ToolDefinition[];
   readonly maxInFlightCalls?: number;
+  /** Generous by default so a test is never throttled by accident; a rate-limit test sets it. */
+  readonly maxCallsPerSecond?: number;
   readonly maxResultBytes?: number;
+  /** Shared with the test so it can read the counts; the executor owns a private one otherwise. */
+  readonly handlerLedger?: HandlerLedger;
   readonly clock?: Clock;
+  /** Replaces the admission policy the options above would build, to close it from a test. */
+  readonly admission?: CallAdmission;
   readonly ids?: IdGenerator;
   /** Replaces the real executor, for tests of what the server hands it. */
   readonly executeTool?: ToolExecutor;
@@ -31,28 +39,47 @@ export interface McpHarness {
   close(): Promise<void>;
 }
 
+/** The real executor over `registry`, sharing the test's ledger when it brought one. */
+function realExecutor(
+  options: McpHarnessOptions,
+  registry: ReturnType<typeof createToolRegistry>,
+  clock: Clock,
+  logger: Logger,
+): ToolExecutor {
+  const executorOptions = {
+    registry,
+    clock,
+    logger,
+    maxResultBytes: options.maxResultBytes ?? 16_384,
+  };
+
+  return options.handlerLedger === undefined
+    ? createToolExecutor(executorOptions)
+    : createToolExecutor({ ...executorOptions, handlerLedger: options.handlerLedger });
+}
+
 /** The server as production composes it, minus stdio: real registry, executor, and descriptors. */
 export function buildMcpServer(
   options: McpHarnessOptions,
   logger: Logger = createRecordingLogger(),
 ): Server {
   const registry = createToolRegistry(options.tools);
-
-  const real = createToolExecutor({
-    registry,
-    clock: options.clock ?? createFakeClock(),
-    logger,
-    maxResultBytes: options.maxResultBytes ?? 16_384,
-  });
-
-  const executeTool = options.executeTool ?? options.wrapExecutor?.(real) ?? real;
+  const clock = options.clock ?? createFakeClock();
+  const real = realExecutor(options, registry, clock, logger);
 
   return createMcpServer({
     serverInfo: { name: "voice-agent-mcp-test", version: "0.0.0" },
     tools: registry,
-    executeTool,
+    executeTool: options.executeTool ?? options.wrapExecutor?.(real) ?? real,
     ids: options.ids ?? createFakeIdGenerator("id"),
-    maxInFlightCalls: options.maxInFlightCalls ?? 16,
+    admission:
+      options.admission ??
+      createCallAdmission({
+        clock,
+        logger,
+        maxCallsPerSecond: options.maxCallsPerSecond ?? 1_000,
+        maxInFlightCalls: options.maxInFlightCalls ?? 16,
+      }),
   });
 }
 

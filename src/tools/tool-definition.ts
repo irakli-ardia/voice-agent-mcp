@@ -1,14 +1,25 @@
 import type { z } from "zod";
+import type { ConfirmationGrant } from "../domain/confirmation-grant.js";
 import type { JsonObject } from "../domain/json-value.js";
 import { err, ok, type Result } from "../domain/result.js";
 import type { Clock } from "../ports/clock.js";
 
-/** A request to run a named tool. Comes from a model or an MCP client: nothing in it is trusted. */
+/**
+ * A request to run a named tool. Comes from a model or an MCP client: `id`, `name` and `arguments`
+ * are not trusted.
+ */
 export interface ToolCall {
   readonly id: string;
   readonly name: string;
   /** Raw, unvalidated arguments; only the tool's input schema may interpret them. */
   readonly arguments: unknown;
+  /**
+   * Approval for a tool that requires confirmation, set only by trusted host code. It is never read
+   * from, or copied out of, a model's output or an MCP request: the agent runner and the MCP adapter
+   * build the call from `id`, `name` and `arguments` alone, so no caller can supply it. Without a
+   * valid grant for this very call, a tool that requires confirmation is refused.
+   */
+  readonly confirmation?: ConfirmationGrant;
 }
 
 /** What a handler may use. Aborted when the executor stops waiting (deadline or caller). */

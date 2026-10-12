@@ -73,14 +73,19 @@ to the error log.
 `src/app/tools/tool-executor.ts`. Every caller goes through it, and it never throws:
 
 ```
-lookup exact registered tool → validate input → policy → caller already cancelled?
-  → deadline + execute → validate output → result size cap → one outcome log event → Result
+lookup exact registered tool → validate input → policy (confirmation) → caller already cancelled?
+  → handler ledger → spend the grant → deadline + execute → validate output → result size cap → one outcome log event → Result
 ```
 
 Only the executor calls `bindArguments`, so no code reaches a handler any other way
-(`tests/architecture/tool-execution-path.test.ts`). The policy step fails closed today: a tool
-that requires confirmation is refused with `confirmation_required`, because the host confirmation
-channel arrives in M6.
+(`tests/architecture/tool-execution-path.test.ts`). The policy step fails closed: a tool that
+requires confirmation runs only if the call carries a host-issued `ConfirmationGrant` for that tool
+name and call id, which the executor spends exactly when it admits the handler; otherwise it is
+refused with `confirmation_required`. The exact order is validation, then the confirmation check,
+then the cancellation check, then the handler ledger, then spending the grant, then the handler.
+So an unconfirmed call is refused even if cancelled, an invalid call is `invalid_input` whether or
+not it carries a grant, and a cancelled or overloaded call does not use its grant up. See
+[security](security.md#confirmation).
 
 ### Outcomes
 
@@ -88,7 +93,7 @@ Every failure carries a stable `code` and a message that is safe to show a model
 
 | Code | Handler invoked? | Effect on the world |
 | --- | --- | --- |
-| `unknown_tool`, `invalid_input`, `confirmation_required` | no | none |
+| `unknown_tool`, `invalid_input`, `confirmation_required`, `overloaded` | no | none |
 | success | yes, finished | done |
 | `execution_failed` | yes, finished | the tool's declared expected failure |
 | `invalid_output`, `output_too_large` | yes, finished | effects done, result withheld |
@@ -119,6 +124,28 @@ read-only tools and is why every write tool takes a required idempotency key
 ([write tools](#write-tools-and-idempotency)). When such a handler settles after all, the executor
 logs `tool.settled_late`; the caller's result never changes
 ([observability](observability.md#tool-events)).
+
+### Unsettled handlers
+
+Because a handler cannot be stopped, the executor keeps a **handler ledger**
+(`src/app/tools/handler-ledger.ts`). A handler enters it just before it is invoked and leaves it
+only when its own promise settles, never when the executor returns. Until then it is *active*; when
+the executor stops waiting (a deadline or a cancellation) while it still runs, it becomes
+*abandoned*. A call that fails validation, needs confirmation, or was cancelled before invocation
+never enters the ledger.
+
+When `MAX_ABANDONED_TOOL_HANDLERS` handlers are already abandoned (default 3, 1–64), a new call
+is refused with `overloaded` before its handler is invoked: no handler runs, no idempotency key is
+consumed, and the message is fixed ("Too many earlier tool calls are still running; retry later.").
+The next call is admitted as soon as one abandoned handler settles. The limit counts abandoned
+handlers only, so the number of calls running at once is bounded by whoever admits calls: the agent
+loop runs them one at a time, and over MCP `MCP_MAX_IN_FLIGHT_CALLS` caps them. Calls already
+running when the limit is reached are not stopped, so a burst can leave more abandoned handlers than
+the limit; it stops further calls.
+
+The ledger holds two counters and one shared "idle" signal: no per-call state. It exposes
+`idle()`, which resolves when no invoked handler is unsettled; the MCP shutdown waits on it, up to its
+grace ([MCP](mcp.md#shutdown)).
 
 The deadline is `timeoutMs` from the definition. A caller's limit — a turn deadline, a client
 disconnect — arrives as the caller's `AbortSignal`; there is no separate configured tool-timeout
@@ -172,7 +199,7 @@ What each `create_note` outcome means for the caller:
 | --- | --- |
 | `ok`, `created: true` | written by this call |
 | `ok`, `created: false` | written earlier by a call with the same key; this call wrote nothing |
-| `execution_failed` (`idempotency_key_conflict`, `note_unreadable`, `storage_unavailable`) | this call wrote nothing; retrying the same request is safe |
+| `execution_failed` (`idempotency_key_conflict`, `note_unreadable`, `note_quota_exceeded`, `storage_unavailable`) | this call wrote nothing; retrying the same request is safe (a full store refuses new keys, never replays) |
 | `invalid_input`, `unknown_tool` | nothing written |
 | `invalid_output` | written; the result was withheld, and a retry with the same key replays it |
 | `timed_out`, `cancelled`, `internal_error` | unknown; retry with the same key |

@@ -49,7 +49,7 @@ interface GatedLink {
   readonly release: () => void;
 }
 
-/** Holds the first link (the commit) until released; later links run at once. */
+/** Holds the first link of a note (the commit) until released; every other link runs at once. */
 function gateFirstLink(): GatedLink {
   const reached = Promise.withResolvers<void>();
   const gate = Promise.withResolvers<void>();
@@ -59,9 +59,9 @@ function gateFirstLink(): GatedLink {
     files: {
       ...nodeNoteFiles,
       link: async (existingPath: string, newPath: string): Promise<void> => {
-        calls += 1;
+        calls += newPath.endsWith(".json") ? 1 : 0;
 
-        if (calls === 1) {
+        if (calls === 1 && newPath.endsWith(".json")) {
           reached.resolve();
           await gate.promise;
         }

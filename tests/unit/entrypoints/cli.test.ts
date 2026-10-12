@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createAgentRunner } from "../../../src/app/agent/agent-runner.js";
+import { createHandlerLedger } from "../../../src/app/tools/handler-ledger.js";
 import { createToolExecutor } from "../../../src/app/tools/tool-executor.js";
 import { createToolRegistry } from "../../../src/app/tools/tool-registry.js";
 import type { Composition } from "../../../src/bootstrap/composition.js";
@@ -392,11 +393,20 @@ function recordingComposition(replies: readonly FakeReply[], logger: RecordingLo
         defineCreateNoteTool(createFakeNoteStore()),
       ]);
 
+      const handlerLedger = createHandlerLedger({ maxAbandoned: 3 });
+
       return {
         config,
         logger,
         tools,
-        executeTool: createToolExecutor({ registry: tools, clock, logger, maxResultBytes: 16_384 }),
+        handlerLedger,
+        executeTool: createToolExecutor({
+          registry: tools,
+          clock,
+          logger,
+          maxResultBytes: 16_384,
+          handlerLedger,
+        }),
       };
     },
     createAgent: (application) =>

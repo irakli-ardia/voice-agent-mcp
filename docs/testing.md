@@ -114,8 +114,11 @@ CLI has no such hook), and tests wait on messages from the child. Every child is
 in a `finally`, with a bounded wait so a hang fails instead of stalling. Children get the SDK's
 safe-environment allowlist, never the developer's environment, so no API key can leak in.
 
-Signals: on Windows `kill()` ends a child process without delivering SIGINT or SIGTERM, so the three
-signal tests run only on POSIX and are skipped, visibly, on Windows. Closing stdin, the stop that works everywhere, is tested
+Shutdown is tested at three levels: `serveMcp` with a handler that never settles and a stdout that
+never drains (real timers, a 60 ms grace), `runMcpStdio` with fake timers and a `forceExit` spy, and
+real children through the real bin, source and built, with a write held in its commit window forever.
+Signals: on Windows `kill()` ends a child process without delivering SIGINT or SIGTERM, so the signal
+tests run only on POSIX and are skipped, visibly, on Windows (closing stdin covers the bound there). Closing stdin, the stop that works everywhere, is tested
 on both. The test jobs run on Linux with Node 22 and 24 and on Windows with Node 24.
 
 ## What to cover

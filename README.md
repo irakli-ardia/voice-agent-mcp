@@ -91,8 +91,9 @@ node dist/entrypoints/voice-agent.js mcp     # waits for an MCP client on stdin/
 
 ### Connect a client
 
-Most stdio MCP clients take a server entry of this shape. Replace the placeholders with your own
-absolute paths (on Windows, use forward slashes or escape each backslash):
+Most stdio MCP clients take a server entry of this shape. **`DATA_DIR` is required and must be an
+absolute path**; replace both placeholders with your own absolute paths (on Windows, use forward
+slashes or escape each backslash):
 
 ```json
 {
@@ -109,8 +110,23 @@ absolute paths (on Windows, use forward slashes or escape each backslash):
 - Build first (`npm run build`); the entry point is the compiled JavaScript. Start it with `node`, not
   through `npm start`: npm prints a banner on stdout, which is not an MCP message and breaks the
   protocol (`npm start --silent -- mcp` is safe).
-- Set `DATA_DIR` to an absolute path. A client may start the server in any working directory, and a
-  relative `DATA_DIR` is resolved against it. Notes are stored under `<DATA_DIR>/notes`.
+- `DATA_DIR` is where notes are stored (under `<DATA_DIR>/notes`). The server **refuses to start**
+  without it: it exits 78 with `DATA_DIR: must be set to an absolute directory path for this
+  command`, or `must be an absolute path` for a relative one, and writes nothing. There is no
+  default and a relative path is never resolved, because a client may start the server in any
+  working directory (often your project) and notes would land there. The message never repeats the
+  value. Examples of a valid value:
+
+  | System | `DATA_DIR` |
+  | --- | --- |
+  | Windows | `C:/Users/<you>/AppData/Local/voice-agent` (JSON: `"C:\\Users\\<you>\\AppData\\Local\\voice-agent"`) |
+  | Linux | `/home/<you>/.local/share/voice-agent` |
+  | macOS | `/Users/<you>/Library/Application Support/voice-agent` |
+
+  Not valid: an empty value, `.data`, `notes`, `./notes`, `~/notes` (no shell expands `~` in this
+  file), `\notes` or `C:notes` on Windows, and a path with `< > " | ? *` on Windows. It need not
+  exist yet; it must be on a local filesystem with hard links. `ask` and `tools` are unchanged
+  and keep `.data` as their default.
 - Add nothing secret. The server reads no API key.
 
 It has been tested with the official MCP TypeScript SDK client, in both protocol eras, and with raw
@@ -137,16 +153,19 @@ note.
 
 Results come back as `structuredContent` plus one text block holding the same JSON. A failed call is
 a result with `isError: true` and the text `<code>: <message>`, using the executor's error codes
-(`invalid_input`, `timed_out`, `cancelled`, `execution_failed`, `output_too_large`, …); an unknown
+(`invalid_input`, `timed_out`, `cancelled`, `execution_failed`, `output_too_large`, `overloaded`, `rate_limited`, `server_shutting_down`, …; a full note store is `execution_failed: note_quota_exceeded`); an unknown
 tool is the JSON-RPC error -32602.
 
 ### Configuration
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
+| `MCP_MAX_CALLS_PER_SECOND` | 20 (1–1000) | Sustained rate and burst of tool calls; more are refused with `rate_limited` |
 | `MCP_MAX_IN_FLIGHT_CALLS` | 16 (1–128) | Tool calls running at once; the next is refused with `server_busy` |
+| `MAX_ABANDONED_TOOL_HANDLERS` | 3 (1–64) | Handlers still running after a cancel or timeout before new calls are refused with `overloaded` |
 | `MAX_TOOL_RESULT_BYTES` | 16384 | Largest JSON result of one call, in UTF-8 bytes |
-| `DATA_DIR` | `.data` | Where notes are stored; use an absolute path |
+| `MAX_NOTES` | 10000 (1–1000000) | The most notes the store holds, across every process sharing `DATA_DIR`; a new note over it fails with `note_quota_exceeded`, a saved note is still returned |
+| `DATA_DIR` | `.data` (`ask`, `tools`); **required, absolute** for `mcp` | Where notes are stored. `voice-agent mcp` exits 78 if it is unset, empty, or relative |
 | `LOG_LEVEL` | `info` | Logs go to stderr; `silent` hides them |
 
 An invalid value exits with code 78, naming the variable and never its value. Fixed in code: the
@@ -158,20 +177,33 @@ An invalid value exits with code 78, naming the variable and never its value. Fi
   committing can still finish, and the outcome is unknown to the client. Retry with the **same**
   `idempotencyKey` to learn the result without writing twice. Closing stdin has the same effect on
   every call in flight.
-- **`MCP_MAX_IN_FLIGHT_CALLS` is a concurrency cap, not request-rate limiting.** It does not count a
-  tool that is still running after a cancellation or a timeout, and a client can still send calls
-  at a high rate.
+- **`MCP_MAX_CALLS_PER_SECOND` limits how many calls reach a tool, not what a client may send.**
+  Every request is still read and answered. A client that stops reading answers makes the server
+  stop reading requests once 64 KiB of output is queued; the queue is capped (33 MiB by default,
+  past which the connection fails with exit 1) instead of growing without limit. A stop signal while
+  the client is not reading ends the process within about 2.5 seconds; the answers still queued are
+  not delivered, which is logged.
+- **Shutdown is bounded, and a forced exit can interrupt unfinished work.** After stdin closes, or on
+  SIGINT or SIGTERM, the server stops accepting calls, tells running ones to stop, and waits at most
+  2 seconds for them and for queued answers. If the process is still alive half a second later
+  (a tool blocked in I/O, a client that never reads) it is ended with the exit code it would have
+  had. A write is either fully published or not visible, but its outcome may be unknown to the
+  client: retry with the same `idempotencyKey`.
+- **`MCP_MAX_IN_FLIGHT_CALLS` is a concurrency cap.** It does not count a
+  tool that is still running after a cancellation or a timeout; `MAX_ABANDONED_TOOL_HANDLERS`
+  bounds those by refusing new calls, and the rate limit above is what bounds a fast client.
 - A message over 1 MiB ends the server with exit 1. A request with an invalid envelope (for example a
   malformed `_meta`) gets no response at all, so such a client waits until its own timeout.
 - Two requests in flight under one JSON-RPC id (which the protocol forbids) both run and share the
   id, and a cancellation reaches only the later one.
-- There is no interactive confirmation over MCP yet: a tool that requires confirmation is refused.
-  No current tool requires it.
+- A tool that requires confirmation is always refused over MCP, and the model cannot approve it
+  either: approval is a host-issued, single-use grant that no request, argument, or `_meta` can carry.
+  No current tool requires it, and there is no interactive confirmation flow yet.
 - stdio only: no HTTP transport and no authentication; the process that starts the server is the
   trust boundary.
 
 Exit codes: 0 stdin closed · 1 transport failure · 64 extra arguments · 70 unexpected failure · 78
-configuration · 130 SIGINT · 143 SIGTERM. Closing stdin is the graceful stop that works on every
+configuration · 130 SIGINT · 143 SIGTERM (a forced exit keeps the code). Closing stdin is the graceful stop that works on every
 platform; on Windows, a host that kills the process gives it no signal to handle.
 
 stdout carries protocol messages only; logs, one JSON object per line, go to stderr and never contain

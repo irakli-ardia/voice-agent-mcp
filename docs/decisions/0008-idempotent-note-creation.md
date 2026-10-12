@@ -23,7 +23,9 @@ CLI and an MCP server on one `DATA_DIR`), and its files are read back as untrust
 - Each note is one immutable JSON file, `<DATA_DIR>/notes/<noteId>.json`, holding the full key.
   It is published by writing and fsyncing a temp file in the same directory, then `link`ing it to
   the note's name. The successful link is the only commit point. A link that fails with `EEXIST`
-  means another call committed the key; the store reads and validates that record.
+  means another call committed the key; the store reads and validates that record. (Since
+  [0013](0013-note-quota-slots.md) a quota slot is claimed just before the link; the link is still
+  the commit point.)
 
 ## Consequences
 

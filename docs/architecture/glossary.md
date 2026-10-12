@@ -21,12 +21,15 @@ CLI output use these words consistently; a design discussion adds to this list w
 | Failure reason | A tool's declared identifier for an expected failure (`division_by_zero`), mapped to a static, client-safe message | A thrown error or its message (those become `internal_error`) |
 | Outcome unknown | The meaning of `timed_out`, `cancelled`, and `internal_error`: the executor stopped waiting, and the handler may or may not have completed its effect | Proof that nothing happened |
 | Late settlement | A handler finishing after the executor already returned `cancelled` or `timed_out`; logged as `tool.settled_late`, never changing the caller's result | A retry |
+| Abandoned handler | A handler the executor stopped waiting for (a deadline or a cancellation) that is still running; tracked by the handler ledger until it really settles, and capped by `MAX_ABANDONED_TOOL_HANDLERS` | A handler that was stopped (none can be) |
+| Note slot | A directory `note-slots/<index>/` holding a hard link to a complete note file; one is claimed, exclusively, before a note is published, so there are never more notes than `MAX_NOTES`. The note's slot is the record that is the same file as the note | A copy of the note, or a lock |
 | Risk level | `read`, `write`, `destructive`, or `external`; drives the policy decision | Log level |
 | Confirmation | Explicit approval from the user or host, obtained outside the model | The model saying the user agreed |
+| Confirmation grant | A `ConfirmationGrant`: host-issued, for one tool name and call id, spent when the handler is admitted; carried on the `ToolCall`, never in its arguments | A flag, a tool argument, or `_meta` |
 | Host | The process presenting tools to a model: the CLI agent or an MCP client | The OpenAI or MCP SDK |
 | Idempotency key | Required input of every write tool naming one logical operation; owned by the executor's caller — in the agent loop the host, which derives it from the turn, the tool, and the other arguments, never the model. Scope: the whole note store; it lives as long as its note | Exactly-once delivery (never claimed); a transport or tool-call id |
 | Replay | A repeated `create_note` with a used key and the same text: returns the original note with `created: false` and writes nothing | A conflict (same key, different text) |
-| Commit point | The single step after which a write is durable and visible: for notes, the successful hard link of the fsynced temp file to the note's name | Writing the temp file |
+| Commit point | The single step after which a write is visible and a key is taken: for notes, the successful hard link of the fsynced file to the note's name (publication). The slot claim before it only reserves quota and keeps a durable record of intent | Writing the temp file, or claiming a slot |
 | Transcription | The text speech-to-text returns for an `--audio` file; it becomes the turn's user text unchanged | The runner's transcript |
 | Speech renderer | The Realtime model that speaks the final answer. It receives the answer as data and decides nothing: no tools, no conversation | An assistant or second agent |
 | Spoken text | The renderer's own report of what it spoke, compared word for word with the answer before any audio is saved (the fidelity check) | An independent transcription of the audio |
@@ -34,7 +37,8 @@ CLI output use these words consistently; a design discussion adds to this list w
 | Reserved output | The `--speech-out` file, created exclusively before any provider is used and either committed (written, synced, closed) or removed | A file written at the end |
 | MCP era | One of the two protocol generations the server speaks: modern (2026-07-28, no `initialize`, per-request metadata) or legacy (2025-11-25, `initialize` handshake); the server serves both | A tool or API version |
 | Tool descriptor | The MCP form of a tool definition (name, description, input and output JSON Schema, annotation hints), projected from it once at startup | A second tool definition |
-| In-flight limit | `MCP_MAX_IN_FLIGHT_CALLS`: how many MCP tool calls may be executing at once; the next is refused with `server_busy` before any handler runs | Request-rate limiting; a limit on handlers still running after a cancellation or timeout |
+| In-flight limit | `MCP_MAX_IN_FLIGHT_CALLS`: how many MCP tool calls may be executing at once; the next is refused with `server_busy` before any handler runs | The rate limit; a limit on handlers still running after a cancellation or timeout |
+| Rate limit | `MCP_MAX_CALLS_PER_SECOND`: a token bucket (rate = burst) on MCP `tools/call`; a call without a token gets `rate_limited` before any handler runs | A limit on what a client may send, or on `tools/list` |
 | Port / adapter | Port: an interface the application owns (`src/ports`). Adapter: its implementation for a provider, protocol, or the OS (`src/adapters`) | A protocol adapter's business logic (there is none) |
 | Note | A short, immutable text record (`id`, `text`, `createdAt`) created by `create_note` and read by `read_note`; one JSON file under `DATA_DIR/notes`, its id derived from its idempotency key | A file path chosen by the model |
 | Dry run | Shows the proposed tool calls and policy decisions without performing side effects (planned with the confirmation policy, M6) | A test run with fakes |

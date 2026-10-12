@@ -4,6 +4,7 @@
     "scripts/**/*.mjs",
     "src/entrypoints/voice-agent.ts",
     "tests/helpers/mcp-gated-write-server.mjs",
+    "tests/helpers/confirmation-check.mjs",
     "tests/e2e/mcp-dist/require-fresh-build.ts"
   ],
   "ignorePatterns": ["tools/oxlint/anti-slop/**"],

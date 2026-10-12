@@ -2,6 +2,7 @@ import { join } from "node:path";
 import { createPinoLogger } from "../adapters/logging/pino-logger.js";
 import { createFileNoteStore } from "../adapters/persistence/file-note-store.js";
 import { systemClock } from "../adapters/system/system-clock.js";
+import { createHandlerLedger, type HandlerLedger } from "../app/tools/handler-ledger.js";
 import { createToolExecutor, type ToolExecutor } from "../app/tools/tool-executor.js";
 import { createToolRegistry, type ToolRegistry } from "../app/tools/tool-registry.js";
 import type { Config } from "../config/config.js";
@@ -18,6 +19,8 @@ export interface Application {
   readonly tools: ToolRegistry;
   /** The one path to run a tool. */
   readonly executeTool: ToolExecutor;
+  /** Every invoked handler until it settles; a shutdown can wait on `idle()`. */
+  readonly handlerLedger: HandlerLedger;
 }
 
 /**
@@ -26,7 +29,15 @@ export interface Application {
  */
 export function createApplication(config: Config): Application {
   const logger = createPinoLogger({ level: config.logLevel });
-  const notes = createFileNoteStore({ directory: join(config.dataDir, "notes"), logger });
+
+  const notes = createFileNoteStore({
+    directory: join(config.dataDir, "notes"),
+    slotDirectory: join(config.dataDir, "note-slots"),
+    maxNotes: config.maxNotes,
+    logger,
+  });
+
+  const handlerLedger = createHandlerLedger({ maxAbandoned: config.maxAbandonedToolHandlers });
 
   const tools = createToolRegistry([
     getCurrentTimeTool,
@@ -39,11 +50,13 @@ export function createApplication(config: Config): Application {
     config,
     logger,
     tools,
+    handlerLedger,
     executeTool: createToolExecutor({
       registry: tools,
       clock: systemClock,
       logger,
       maxResultBytes: config.maxToolResultBytes,
+      handlerLedger,
     }),
   };
 }

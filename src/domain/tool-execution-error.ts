@@ -8,6 +8,7 @@ export type ToolErrorCode =
   | "confirmation_required"
   | "cancelled"
   | "timed_out"
+  | "overloaded"
   | "execution_failed"
   | "internal_error"
   | "invalid_output"

@@ -61,6 +61,9 @@ export function defineCreateNoteTool(notes: NoteStore): ToolDefinition {
         "This idempotency key was already used for a note with different text. Use a new key " +
         "for a new note.",
       note_unreadable: "A note already exists for this request but cannot be read.",
+      note_quota_exceeded:
+        "The note store is full; this call did not save the note. Existing notes can still be " +
+        "read, and retrying a request that was already saved returns it.",
       storage_unavailable:
         "The note store is unavailable; this call did not save the note. Retrying the same " +
         "request is safe.",
@@ -78,6 +81,8 @@ export function defineCreateNoteTool(notes: NoteStore): ToolDefinition {
           return outcome.note.text === text
             ? ok(describeNote(outcome.note, false))
             : err("idempotency_key_conflict");
+        case "quota_exceeded":
+          return err("note_quota_exceeded");
         case "unreadable":
           return err("note_unreadable");
         case "unavailable":

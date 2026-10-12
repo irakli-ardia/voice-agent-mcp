@@ -167,5 +167,7 @@ to ignore earlier instructions. It never mentions host-owned fields.
 
 ## Dry run
 
-`ask --dry-run` is deferred to M6, together with the confirmation policy
+`ask --dry-run` is deferred, together with a CLI confirmation prompt: the executor's confirmation
+gate exists ([security](security.md#confirmation)), but the agent builds every call without a grant,
+so a tool that requires confirmation is refused with `confirmation_required`
 ([decision 0009](../decisions/0009-stateless-agent-loop.md)).

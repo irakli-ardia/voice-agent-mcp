@@ -76,25 +76,45 @@ only the thrown value's `errorClass`. It is the evidence that a write reported a
 did complete. It never changes the caller's result and never logs output or thrown data. A handler
 that never settles logs nothing more.
 
+A call to a tool that requires confirmation adds `confirmation` to its event: `missing` or `rejected`
+(refused, warn) or `granted` (run); never the grant, the call's arguments, or the reason. A call the
+handler ledger refuses is a `tool.failed` (warn) with `outcome` `overloaded`,
+`handlerInvoked` false, and `abandonedHandlers`, the count of abandoned handlers still running.
+
 ## MCP events
 
 `voice-agent mcp` ([MCP](mcp.md)) logs to stderr like every process; stdout carries only protocol
 messages. Tool calls produce the tool events above, with `toolCallId` set to `mcp:<uuid>` (generated
-by the server, never the JSON-RPC id). The server adds two events, with fixed fields only:
+by the server, never the JSON-RPC id). The server adds four events, with fixed fields only:
 
 - `mcp.transport_error` (warn): the transport reported an error. It carries no fields: the SDK's
   error and its message are never read, because they can echo what a client sent.
 - `mcp.stopped` (error): the connection ended after a transport failure (for example an oversized
   message); the process exits 1. `reason: "transport_failed"`.
 
-A refused call (`server_busy`) and an unknown tool are tool outcomes, not MCP events. A normal end
-(stdin closed, SIGINT, SIGTERM) logs nothing of its own.
+- `mcp.output_queue_overflow` (error): the output queue would have passed its enforced maximum
+  because the client is not reading. `limitBytes` only; it is followed by `mcp.transport_error` and
+  `mcp.stopped`, and the process exits 1. Never any of the queued answers.
+- `mcp.rate_limited` (warn): calls were refused for lack of a token. `refused` (every refusal since
+  the previous line) and `callsPerSecond`; at most one line a second, so a flood cannot flood the log.
+  Never a tool name, argument, key, or id.
+
+A refused call (`server_busy`, `rate_limited`, `server_shutting_down`) and an unknown tool are tool
+outcomes, not MCP events. A normal end (stdin closed, SIGINT, SIGTERM) logs nothing of its own.
+A shutdown that had to give something up logs two events, counts only:
+
+- `mcp.shutdown_incomplete` (warn): the grace ran out. `graceMs`, `unsettledHandlers`,
+  `abandonedHandlers`, `undeliveredBytes` (answers queued and not written), `undeliveredChunks`.
+- `mcp.shutdown_forced` (error): the bin ended the process because it was still alive. `exitCode`.
 
 ## Note store events
 
 The file note store logs `note_store.unavailable` (warn: `operation`, `phase`, `errorCode`),
 `note_store.unreadable` (error: `operation`, `noteId`, `problem`), and
-`note_store.temp_cleanup_failed` (warn: `errorCode`). `errorCode` is a system error code such as
+`note_store.temp_cleanup_failed` (warn: `errorCode`), `note_store.quota_exceeded` (warn: `limit`),
+`note_store.reconciled` (info, only when something was repaired or could not be: `published`,
+`removed`, `accounted`, `unaccounted`, `unreadable`, all counts), and and `note_store.temp_swept` (info:
+`removed`). `errorCode` is a system error code such as
 `ENOENT`, never an error message, which would carry an absolute path. Note text, idempotency keys,
 paths, and stored file contents are never logged; `noteId` is a one-way hash of the key.
 

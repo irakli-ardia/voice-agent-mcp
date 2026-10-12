@@ -95,7 +95,8 @@ describe("dependency direction", () => {
     );
 
     expect(importers.filter((path) => !path.startsWith("src/adapters/persistence/"))).toEqual([]);
-    expect(importers).toContain("src/adapters/persistence/file-note-store.ts");
+    // The note store reaches the disk only through the `NoteFiles` seam in note-files.ts.
+    expect(importers).toContain("src/adapters/persistence/note-files.ts");
     expect(importers).toContain("src/adapters/persistence/local-audio-files.ts");
   });
 

@@ -56,8 +56,8 @@ the variable, never the value.
 | Secret | `OPENAI_API_KEY` (read only by `ask`) |
 | Agent | `OPENAI_MODEL`, `OPENAI_REASONING_EFFORT`, `OPENAI_MAX_OUTPUT_TOKENS`, `OPENAI_TIMEOUT_MS`, `MAX_AGENT_ITERATIONS`, `MAX_TOOL_CALLS_PER_TURN`, `MAX_INPUT_TEXT_CHARS`, `AGENT_TURN_TIMEOUT_MS` |
 | Speech | `OPENAI_STT_MODEL` (`gpt-transcribe`), `OPENAI_TTS_MODEL` (`gpt-realtime-2.1-mini`), `OPENAI_TTS_VOICE` (`marin`), `SPEECH_TIMEOUT_MS` (180000) |
-| MCP | `MCP_MAX_IN_FLIGHT_CALLS` (16; 1–128): tool calls an MCP client may have running at once |
-| Shared | `OPENAI_MAX_RETRIES`, `LOG_LEVEL`, `MAX_TOOL_RESULT_BYTES`, `DATA_DIR` |
+| MCP | `MCP_MAX_IN_FLIGHT_CALLS` (16; 1–128): tool calls an MCP client may have running at once; `MCP_MAX_CALLS_PER_SECOND` (20; 1–1000): their rate and burst |
+| Shared | `OPENAI_MAX_RETRIES`, `LOG_LEVEL`, `MAX_TOOL_RESULT_BYTES`, `MAX_ABANDONED_TOOL_HANDLERS` (3; 1–64), `MAX_NOTES` (10000; 1–1000000), `DATA_DIR` |
 
 Fixed in code, not configuration: the 8 MiB audio input limit, the 800-character limit for spoken
 answers, and the 9 600 000-byte PCM cap per rendering.
@@ -73,8 +73,9 @@ answers, and the 9 600 000-byte PCM cap per rendering.
 ## MCP server
 
 `voice-agent mcp` needs no key. An MCP client starts it as a child process and speaks MCP on its
-stdin and stdout; run by hand it just waits for input (stop it with Ctrl+C, or by closing stdin). Point a client at the built entry point and give it an absolute `DATA_DIR`
-(the [README](../README.md#connect-a-client) has the configuration shape):
+stdin and stdout; run by hand it just waits for input (stop it with Ctrl+C, or by closing stdin). Point a client at the built entry point and give it an absolute `DATA_DIR`,
+which `mcp` requires (the [README](../README.md#connect-a-client) has the configuration shape and
+a valid path for Windows, Linux and macOS):
 
 ```bash
 npm run build
@@ -87,7 +88,8 @@ clients with `node dist/entrypoints/voice-agent.js mcp`.
 
 stdout carries protocol messages only; logs go to stderr (`LOG_LEVEL=silent` hides them). Exit
 codes: 0 stdin closed, 1 transport failure (for example a message over 1 MiB), 64 extra arguments,
-70 unexpected failure, 78 invalid configuration, 130 SIGINT, 143 SIGTERM. To exercise the built
+70 unexpected failure, 78 invalid configuration (including a missing or relative `DATA_DIR`),
+130 SIGINT, 143 SIGTERM. To exercise the built
 server as the tests do: `npm run test:mcp-dist`. Details: [MCP](architecture/mcp.md).
 
 ## Gotchas

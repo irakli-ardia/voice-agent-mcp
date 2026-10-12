@@ -132,7 +132,11 @@ describe("the compiled distribution", () => {
     expect(existsSync(DIST_CLI_ENTRY)).toBe(true);
     expect(text.startsWith("#!/usr/bin/env node")).toBe(true);
     expect(runtimeArguments(true)).toEqual([]);
-    expect(runtimeArguments(false)).toEqual(["--import", "tsx"]);
+    // The sources run through the tsx loader, named by absolute URL so any working directory finds it.
+    expect(runtimeArguments(false)).toEqual([
+      "--import",
+      expect.stringMatching(/^file:\/\/.*\/node_modules\/tsx\/dist\/esm\/index\.mjs$/),
+    ]);
     expect(text).not.toMatch(/\.ts["']/);
   });
 });
@@ -422,21 +426,6 @@ describe("what the compiled server really writes", () => {
       "output_too_large: The tool result is too large to return.",
     );
     expect(under.structuredContent).toBeUndefined();
-  });
-
-  it("resolves a relative DATA_DIR against the working directory it was started in", async () => {
-    const space = await workspace();
-
-    await withMcpChild(
-      { entry: DIST_CLI_ENTRY, compiled: true, args: ["mcp"], cwd: space.cwd, env: {} },
-      async (child) => {
-        await child.send(createNote(1, "in the working directory", KEY));
-        await toolResultOf(child, 1);
-        await finish(child);
-      },
-    );
-
-    expect(await notesIn(join(space.cwd, ".data"))).toBe(1);
   });
 
   it("runs concurrent requests, each answered with its own result", async () => {

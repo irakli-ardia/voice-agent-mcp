@@ -14,7 +14,7 @@ MCP client ⇄ stdio ⇄ serveStdio (SDK) → createMcpServer → tool executor 
 
 | Piece | File | Responsibility |
 | --- | --- | --- |
-| Entrypoint | `src/entrypoints/mcp-stdio.ts` | Arguments, configuration, stop signals, exit codes, releasing stdin. Never exits the process itself. |
+| Entrypoint | `src/entrypoints/mcp-stdio.ts` | Arguments, configuration, stop signals, exit codes, releasing stdin, and the shutdown backstop. Ends the process only through the `forceExit` the bin hands it. |
 | Composition | `src/bootstrap/serve-mcp.ts` | SDK `serveStdio` over the SDK's stdio transport with the 1 MiB inbound limit; builds one `Server` per connection over the one shared application; reports how the connection ended. |
 | Server | `src/adapters/mcp/create-mcp-server.ts` | The SDK's low-level `Server`: `tools/list` and `tools/call` handlers, the call id, the in-flight limit. |
 | Descriptors | `src/adapters/mcp/mcp-tool-descriptors.ts` | Canonical tool definitions → MCP tool descriptors. |
@@ -67,7 +67,7 @@ from the canonical definition:
 ## Calls
 
 ```
-tools/call → in-flight check → executor({ id: "mcp:<uuid>", name, arguments ?? {} }, request signal)
+tools/call → rate limit → in-flight check → executor({ id: "mcp:<uuid>", name, arguments ?? {} }, request signal)
            → map the result → client
 ```
 
@@ -79,14 +79,16 @@ tools/call → in-flight check → executor({ id: "mcp:<uuid>", name, arguments 
   `MAX_TOOL_RESULT_BYTES`, so a response can carry up to about twice that.
 - **Tool failures** are results with `isError: true` and the text `<code>: <message>`: `invalid_input`,
   `confirmation_required`, `cancelled`, `timed_out`, `execution_failed`, `internal_error`,
-  `invalid_output`, `output_too_large`. The message is the executor's fixed or bounded text, never an
+  `invalid_output`, `output_too_large`, `overloaded`. The message is the executor's fixed or bounded text, never an
   argument, an output, or a thrown message.
 - **Protocol errors:** an unknown tool is JSON-RPC -32602 with the static message `No tool with this
   name exists.` (the requested name is not echoed), as the spec classes it. Anything unexpected
   inside the handler becomes a static -32603 `Internal error`. The SDK would otherwise send a thrown
   error's own message to the client, so the handler throws only those two static errors.
-- **Confirmation:** a tool that requires it is refused with `confirmation_required`, as in the CLI.
-  No current tool requires it, and there is no interactive confirmation over MCP yet (M6).
+- **Confirmation:** a tool that requires it is always refused with `confirmation_required`, as in
+  the CLI: the adapter builds the call from the tool name, the arguments and a generated id, never
+  from `_meta`, so no client can grant it. No current tool requires it, and MCP elicitation is not
+  implemented ([security](security.md#confirmation)).
 
 ## Idempotency
 
@@ -117,20 +119,44 @@ Calls run concurrently; there is no server-wide lock.
 
 | Bound | Value | What it bounds |
 | --- | --- | --- |
+| `MCP_MAX_CALLS_PER_SECOND` | 1–1000, default 20 | The sustained `tools/call` rate and the burst of one server process. A call over it is refused with `rate_limited` (a tool failure) before the executor is reached ([rate limit](#rate-limit)). |
 | `MCP_MAX_IN_FLIGHT_CALLS` | 1–128, default 16 | MCP requests being executed at once. The next call is refused with `server_busy` (a tool failure) before the executor is reached, so no handler runs and no idempotency key is consumed. |
 | Inbound message | 1 MiB, fixed | One JSON-RPC message. A larger one ends the connection and the process (exit 1). |
 | `MAX_TOOL_RESULT_BYTES` | default 16384 | The JSON of one successful result, in UTF-8 bytes. |
+| `MAX_ABANDONED_TOOL_HANDLERS` | 1–64, default 3 | Handlers the executor stopped waiting for (after a cancel or a timeout) that are still running. At the limit a call is refused with `overloaded` before its handler runs ([tool system](tool-system.md#unsettled-handlers)). |
+| Output queue | `32 MiB + calls x (3 x result cap + 4 KiB)`, 33 MiB by default; not configured directly | Bytes of answers retained while stdout is backed up. Past it the connection fails (exit 1). Separate from the 64 KiB threshold at which the server stops reading requests ([backpressure](#stdio-and-the-process)). |
 | Tool timeouts | per tool | How long the executor waits. |
 
 What these do **not** bound, stated plainly:
 
 - The in-flight limit counts requests the executor is waiting on. A handler that outlives a
-  cancellation or a timeout no longer holds a slot, so more handlers can be running than the limit.
-- It is a concurrency cap, not request-rate limiting; a client can still send a high rate of calls
-  that are quickly refused or completed.
+  cancellation or a timeout no longer holds a slot; the handler ledger counts it instead, and
+  refuses new calls (`overloaded`) once `MAX_ABANDONED_TOOL_HANDLERS` of them are still running. Calls
+  that were already in flight when that limit is reached are not stopped, so up to the in-flight
+  limit more handlers can be abandoned at that moment.
+- Neither limit stops a client from *sending* requests: every line is still read, parsed, and, if
+  refused, answered. `tools/list`, notifications, and unparseable lines are not rate limited.
 - Two in-flight requests that reuse one JSON-RPC id (a client error the spec forbids) both run and
   are answered under the same id, and a cancellation for that id reaches only the later one. The SDK
   offers no safe way to reject the duplicate.
+
+### Rate limit
+
+`MCP_MAX_CALLS_PER_SECOND` is a token bucket: it starts full with that many tokens, refills
+continuously at that rate, and never holds more than one second's worth, so the rate and the burst
+are the same number (default 20). It is one bucket for the whole server process, which on stdio is
+one client. Time comes from the server's monotonic clock.
+
+- **Order:** a `tools/call` first needs a token, then an in-flight slot, then it reaches the
+  executor. A call without a token is refused with `rate_limited` and takes nothing.
+- **Refused calls are not free:** a call that finds a token takes it even when the in-flight limit
+  then refuses it with `server_busy`, so a flood of busy refusals drains the bucket too.
+- **Cancelled calls are charged:** a token is taken when the call is admitted, whatever happens to
+  it afterwards. The in-flight slot is released however the call ends.
+- **Answer:** an `isError` result, `rate_limited: Too many tool calls; retry after a short delay.`
+  The tool name and arguments are never echoed, so this holds for an unknown tool too.
+- **Log:** `mcp.rate_limited` (warn) with `refused` and `callsPerSecond` only, at most once a
+  second; `refused` counts every refusal since the previous line.
 
 ## stdio and the process
 
@@ -138,16 +164,103 @@ What these do **not** bound, stated plainly:
   help text is ever written to stdout by the server (starting it through `npm run` or `npm start`
   adds npm's own banner, so clients should run `node` directly or use `npm --silent`), and `console` is not used in `src`; an architecture test and
   a real-process test enforce both. A line the SDK cannot parse, or a request whose envelope is invalid (for example a malformed `_meta`), is dropped with no JSON-RPC response and reported as the fixed event `mcp.transport_error`; the client must time out on its own, and the server keeps serving.
-- **Lifecycle:** the server runs until stdin ends. Stdin EOF is a normal end (exit 0), and the process
-  then leaves once any write it already started has finished. `SIGINT` and `SIGTERM` close the
-  connection, abort in-flight calls, and exit 130 or 143. On Windows a host that stops a server
-  by killing the process gives it no signal to handle, so closing stdin is the graceful stop that
-  works on every platform.
+- **Backpressure:** answers are queued in the server and handed to stdout one at a time. Three
+  different numbers apply, and only the last is a limit:
+  - *The pause threshold, 64 KiB.* When the bytes queued reach it, the server stops reading
+    requests; it resumes when they fall below it again.
+  - *The queue's actual size,* which can be larger. The answers to the one read of input that
+    crossed the threshold (up to 64 KiB of requests) and to calls already running are still queued
+    after the pause. The smallest requests are answered about a hundred times larger (a 50-byte
+    `tools/list` gets 5 KB), so the worst case measured was 6.7 MB queued, and about 15 MB for a
+    slower writer.
+  - *The enforced maximum,* `32 MiB + MCP_MAX_IN_FLIGHT_CALLS x (3 x MAX_TOOL_RESULT_BYTES + 4 KiB)`
+    (33 MiB with the defaults). A write that would pass it is not retained: the connection fails,
+    `mcp.output_queue_overflow` and `mcp.transport_error` are logged, and the process exits 1. The
+    answers still queued are discarded with the connection (the client sees the server end, and
+    every line it did receive is a whole message), so nothing is dropped without that failure being
+    reported. The queue is released when the connection ends. Normal use never reaches it.
+
+  Without this, a client that sends requests but never reads answers makes the process queue every
+  response in memory: on Linux, about 90 MB per 10 000 unread `tools/list` answers, without limit
+  (Windows pipes block the process instead). A client that stops reading stalls only itself; closing
+  its end of stdin is noticed once it reads again.
+- **Lifecycle:** the server runs until stdin ends. Stdin EOF is a normal end (exit 0); `SIGINT` and
+  `SIGTERM` close the connection and exit 130 or 143. On Windows a host that stops a server by
+  killing the process gives it no signal to handle, so closing stdin is the graceful stop that works
+  on every platform. How the end is bounded is under *Shutdown*.
+
+### Shutdown
+
+The first sign of the end (stdin EOF, SIGINT or SIGTERM, or a transport failure) starts one
+shutdown, in this order. A repeated signal changes nothing: the first one's exit code and deadline
+stand, and the handlers stay installed so a second signal is never the default kill.
+
+1. **Admission is closed.** A `tools/call` that arrives from here on is refused with
+   `server_shutting_down` before any handler runs (in practice the connection is already closed, so
+   this is a backstop).
+2. **The connection is closed and every running call is told to stop** through its `AbortSignal`.
+   Nothing more is read, and stdin is released.
+3. **The server waits, up to the grace** (`MCP_SHUTDOWN_GRACE_MS`, 2 seconds, counted from step 1),
+   for two things at once: every invoked handler to settle (the handler ledger's `idle()`), and every
+   answer already queued to be written to stdout. Handlers that honour their signal, such as the note
+   store before its link, settle in milliseconds, so a normal shutdown does not wait the grace. The
+   grace is a constant, not configuration.
+4. **At the grace it gives up and says so.** It logs `mcp.shutdown_incomplete` (warn) with counts only:
+   `unsettledHandlers`, `abandonedHandlers`, `undeliveredBytes`, `undeliveredChunks`. Answers still
+   queued are not delivered and are never described as delivered.
+5. **The exit code is returned**, then the process ends by itself if nothing holds it. If something
+   does (a handler blocked in I/O, a stdout the client never reads), the bin ends the process
+   `MCP_FORCE_EXIT_SLACK_MS` (500 ms) later, with the same exit code, after logging
+   `mcp.shutdown_forced` (error). On a signal the 2.5 seconds are counted from the signal; otherwise
+   from the end of the grace. So the process always ends within about 2.5 seconds of the first sign
+   of the end, plus the time to start.
+
+Only the bin (`src/entrypoints/voice-agent.ts`) calls `process.exit`; every other module returns or
+calls the `forceExit` it was handed, and the timer is unreferenced, so a process that ends by itself
+is never held for it.
+
+**What a forced exit does.** It interrupts whatever the process was doing: a write that was still
+being committed may or may not have been (a note is either fully published or not visible; see
+[security](security.md#filesystem-safety)), the client may never learn the outcome of a call it
+sent, and answers still queued are lost. Cancellation and shutdown do not stop an underlying
+filesystem call that is already blocked; they only stop the server waiting for it. Retrying with
+the same idempotency key is the safe way to find out what happened.
+
+**What is not bounded.** A client that keeps stdin open and never reads stdout stalls itself, and
+the server cannot see an end of input while it has stopped reading, so with no signal and no
+closed pipe the process waits for the client. Once the client closes the pipe, or a stop signal
+arrives, the bound above applies.
 - **Transport failure:** an oversized message, or any transport error that closes the connection,
   logs the fixed events `mcp.transport_error` and `mcp.stopped` and exits 1, never 0. Stdin is
   released at the end, so the process does not hang.
 - **Exit codes:** 0 stdin closed · 1 transport failure · 64 extra arguments · 70 unexpected failure
-  (class only on stderr) · 78 invalid configuration · 130 SIGINT · 143 SIGTERM.
+  (class only on stderr) · 78 invalid configuration · 130 SIGINT · 143 SIGTERM. A forced exit uses
+  the same code the graceful one would have; a forced exit is never a new code.
+
+## DATA_DIR
+
+An MCP host starts the server in a working directory the user did not choose, often their project.
+With the CLI's default (`.data`, resolved against the working directory) the server would write notes
+into that project. So `voice-agent mcp` requires `DATA_DIR`, explicit and absolute, and checks it
+before anything else is built or touched.
+
+- **Rule:** set, not empty or blank, and absolute for the platform it runs on. Windows: a drive and a
+  separator (`C:\x`, `C:/x`), a UNC share, or a verbatim drive path (`\\?\C:\x`); never `\x` (the
+  current drive), `C:x` (a drive's current directory), or a path with `< > " | ? *`. POSIX: a leading
+  `/`. A NUL byte is never valid. `~` is not expanded. `..` segments are allowed in an absolute path
+  (they resolve), and the value is never resolved against the working directory.
+- **Failure:** exit 78 and `Invalid configuration:` with `DATA_DIR: must be set to an absolute
+  directory path for this command` (unset, empty, blank) or `DATA_DIR: must be an absolute path for
+  this command (not relative, not drive-relative)`, listed with any other bad setting. The value is
+  never printed. No directory or file is created, no application is built, stdout stays empty.
+- **Order:** an argument error (exit 64) is reported before configuration (exit 78).
+- **Scope:** only `mcp` (`loadConfig(env, { dataDir: "explicit-absolute" })` in
+  `src/entrypoints/mcp-stdio.ts`). `ask`, `tools` and `--help` keep the default and the relative
+  behaviour. The directory need not exist; the store creates `notes` and `note-slots` under it on the
+  first write, not at startup.
+- **Not checked:** that the path is on a suitable filesystem, that it is writable, or that it is not
+  a symbolic link elsewhere; those fail at the first write as `storage_unavailable`
+  ([security](security.md#filesystem-safety)).
 
 ## Logging and privacy
 
@@ -174,8 +287,8 @@ the in-process and real-process tests only. Do not read this table as support fo
 ## Not built
 
 Streamable HTTP and authentication (the host process is the trust boundary for stdio), resources,
-prompts, logging notifications, list-changed notifications, progress, confirmation over MCP, and
-request-rate limiting. Hardening beyond this is M6 ([security](security.md#mcp-server)).
+prompts, logging notifications, list-changed notifications, progress, and confirmation over MCP.
+Hardening beyond this is M6 ([security](security.md#mcp-server)).
 
 ## Verification
 

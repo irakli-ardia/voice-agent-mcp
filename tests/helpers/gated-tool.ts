@@ -7,6 +7,8 @@ export interface GatedToolOptions {
   readonly name?: string;
   /** True: an abort ends a held call. False: the call ignores its signal and still finishes. */
   readonly honorsSignal?: boolean;
+  /** The tool's deadline in milliseconds (default 10 000). */
+  readonly timeoutMs?: number;
 }
 
 export interface GatedTool {
@@ -60,7 +62,7 @@ export function createGatedTool(options: GatedToolOptions = {}): GatedTool {
     risk: "read",
     requiresConfirmation: false,
     idempotency: "none",
-    timeoutMs: 10_000,
+    timeoutMs: options.timeoutMs ?? 10_000,
     inputSchema: z.strictObject({ label: z.string().max(32).describe("Names the call.") }),
     outputSchema: z.strictObject({ label: z.string() }),
     failures: {},

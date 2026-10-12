@@ -1,11 +1,20 @@
 import { type ChildProcess, spawn } from "node:child_process";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import { getDefaultEnvironment } from "@modelcontextprotocol/client/stdio";
 import { isJSONRPCErrorResponse, isJSONRPCResultResponse } from "@modelcontextprotocol/server";
 import { z } from "zod";
 import type { JsonObject } from "../../src/domain/json-value.js";
 
 const REPO_ROOT = join(import.meta.dirname, "..", "..");
+
+/**
+ * The tsx loader by absolute URL, so a child started in any working directory (some tests choose an
+ * empty one on purpose) still finds it; the bare name `tsx` is resolved from the working directory.
+ */
+const TSX_LOADER = pathToFileURL(
+  join(REPO_ROOT, "node_modules", "tsx", "dist", "esm", "index.mjs"),
+).href;
 
 /** The shipped command: `voice-agent mcp`, run from source. */
 export const CLI_ENTRY = join(REPO_ROOT, "src", "entrypoints", "voice-agent.ts");
@@ -24,7 +33,7 @@ export const DIST_CLI_ENTRY = join(REPO_ROOT, "dist", "entrypoints", "voice-agen
  * distribution is plain JavaScript that `node` runs as is, which the built-distribution tests rely on.
  */
 export function runtimeArguments(compiled: boolean): readonly string[] {
-  return compiled ? [] : ["--import", "tsx"];
+  return compiled ? [] : ["--import", TSX_LOADER];
 }
 
 /** Longest any single wait may take before the test fails instead of hanging. */

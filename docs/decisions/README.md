@@ -17,6 +17,9 @@ is never edited to change its outcome; a later record supersedes it and both lin
 | [0010](0010-speech-pipeline-around-the-text-agent.md) | Speech pipeline around the text agent, with a Realtime renderer | accepted |
 | [0011](0011-mcp-server-on-the-low-level-sdk-api.md) | MCP server on the SDK's low-level API, caller-owned keys, dual-era stdio | accepted |
 | [0012](0012-thrown-values-are-never-logged.md) | A thrown value is never logged, only its class | accepted |
+| [0013](0013-note-quota-slots.md) | Note quota by exclusive slot claims, recovery without liveness checks | accepted |
+| [0014](0014-confirmation-grant.md) | Confirmation is a host-issued, single-use grant on the call | accepted |
+| [0015](0015-mcp-requires-explicit-data-dir.md) | The MCP server requires an explicit absolute `DATA_DIR` | accepted |
 
 ## Template
 

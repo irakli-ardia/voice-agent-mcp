@@ -22,11 +22,13 @@ const OPENAI_DEFAULTS = {
 
 const SPEECH_DEFAULTS = { timeoutMs: 180_000 };
 
-const MCP_DEFAULTS = { maxInFlightCalls: 16 };
+const MCP_DEFAULTS = { maxInFlightCalls: 16, maxCallsPerSecond: 20 };
 
 const DEFAULTS = {
   logLevel: "info",
   maxToolResultBytes: 16_384,
+  maxAbandonedToolHandlers: 3,
+  maxNotes: 10_000,
   dataDir: resolve(".data"),
   agent: AGENT_DEFAULTS,
   openai: OPENAI_DEFAULTS,
@@ -105,6 +107,56 @@ describe("loadConfig", () => {
     });
   });
 
+  describe("MAX_NOTES", () => {
+    it.each(["1", "1000000"])("accepts the bound %s", (value) => {
+      expect(loadConfig({ MAX_NOTES: value })).toEqual({
+        ok: true,
+        config: { ...DEFAULTS, maxNotes: Number(value) },
+      });
+    });
+
+    it.each(["0", "1000001", "1.5", "-1", "", "many"])(
+      "rejects %j, naming only the variable",
+      (value) => {
+        expect(loadConfig({ MAX_NOTES: value })).toEqual({
+          ok: false,
+          issues: [expect.stringMatching(/^MAX_NOTES: /)],
+        });
+      },
+    );
+
+    it("does not echo a rejected value", () => {
+      expect(JSON.stringify(loadConfig({ MAX_NOTES: "sk-secret-count" }))).not.toContain(
+        "sk-secret-count",
+      );
+    });
+  });
+
+  describe("MAX_ABANDONED_TOOL_HANDLERS", () => {
+    it.each(["1", "64"])("accepts the bound %s", (value) => {
+      expect(loadConfig({ MAX_ABANDONED_TOOL_HANDLERS: value })).toEqual({
+        ok: true,
+        config: { ...DEFAULTS, maxAbandonedToolHandlers: Number(value) },
+      });
+    });
+
+    it.each(["0", "65", "1.5", "-1", "", "many"])(
+      "rejects %j, naming only the variable",
+      (value) => {
+        expect(loadConfig({ MAX_ABANDONED_TOOL_HANDLERS: value })).toEqual({
+          ok: false,
+          issues: [expect.stringMatching(/^MAX_ABANDONED_TOOL_HANDLERS: /)],
+        });
+      },
+    );
+
+    it("does not echo a rejected value", () => {
+      expect(
+        JSON.stringify(loadConfig({ MAX_ABANDONED_TOOL_HANDLERS: "sk-secret" })),
+      ).not.toContain("sk-secret");
+    });
+  });
+
   describe.each([
     ["MAX_AGENT_ITERATIONS", "maxIterations", ["1", "32"], ["0", "33"]],
     ["MAX_TOOL_CALLS_PER_TURN", "maxToolCallsPerTurn", ["1", "128"], ["0", "129"]],
@@ -139,7 +191,7 @@ describe("loadConfig", () => {
     it.each(["1", "128"])("accepts the bound %s", (value) => {
       expect(loadConfig({ MCP_MAX_IN_FLIGHT_CALLS: value })).toEqual({
         ok: true,
-        config: { ...DEFAULTS, mcp: { maxInFlightCalls: Number(value) } },
+        config: { ...DEFAULTS, mcp: { ...MCP_DEFAULTS, maxInFlightCalls: Number(value) } },
       });
     });
 
@@ -157,6 +209,31 @@ describe("loadConfig", () => {
       expect(
         JSON.stringify(loadConfig({ MCP_MAX_IN_FLIGHT_CALLS: "sk-secret-limit" })),
       ).not.toContain("sk-secret-limit");
+    });
+  });
+
+  describe("MCP_MAX_CALLS_PER_SECOND", () => {
+    it.each(["1", "1000"])("accepts the bound %s", (value) => {
+      expect(loadConfig({ MCP_MAX_CALLS_PER_SECOND: value })).toEqual({
+        ok: true,
+        config: { ...DEFAULTS, mcp: { ...MCP_DEFAULTS, maxCallsPerSecond: Number(value) } },
+      });
+    });
+
+    it.each(["0", "1001", "1.5", "-1", "", "many"])(
+      "rejects %j, naming only the variable",
+      (value) => {
+        expect(loadConfig({ MCP_MAX_CALLS_PER_SECOND: value })).toEqual({
+          ok: false,
+          issues: [expect.stringMatching(/^MCP_MAX_CALLS_PER_SECOND: /)],
+        });
+      },
+    );
+
+    it("does not echo a rejected value", () => {
+      expect(
+        JSON.stringify(loadConfig({ MCP_MAX_CALLS_PER_SECOND: "sk-secret-rate" })),
+      ).not.toContain("sk-secret-rate");
     });
   });
 

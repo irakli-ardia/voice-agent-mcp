@@ -15,6 +15,10 @@ if (argv[0] === "mcp") {
       process.stderr.write(text);
     },
     signals: process,
+    // The one place the process may be ended for the server: see `McpStdioIo.forceExit`.
+    forceExit: (code: number): void => {
+      process.exit(code);
+    },
   });
 } else {
   const controller = new AbortController();

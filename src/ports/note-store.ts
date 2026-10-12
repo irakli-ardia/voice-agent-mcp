@@ -9,11 +9,13 @@ export interface NoteDraft {
 
 /**
  * `exists`: a note for this key was already committed; it is returned as stored so the caller can
- * tell a replay from a conflict. `unreadable` and `unavailable`: this call committed nothing.
+ * tell a replay from a conflict. `quota_exceeded`, `unreadable` and `unavailable`: this call
+ * committed nothing.
  */
 export type CreateNoteOutcome =
   | { readonly status: "created"; readonly note: Note }
   | { readonly status: "exists"; readonly note: Note }
+  | { readonly status: "quota_exceeded" }
   | { readonly status: "unreadable" }
   | { readonly status: "unavailable" };
 

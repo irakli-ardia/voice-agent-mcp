@@ -39,7 +39,8 @@ What the SDK does, verified in its source and by experiment:
   `isError` result.
 - **A concurrency cap,** `MCP_MAX_IN_FLIGHT_CALLS` (default 16, 1–128): the call over the limit is
   refused with `server_busy` before the executor, so no handler runs and no key is consumed. It is
-  not request-rate limiting and does not count handlers that outlive a cancellation or a timeout.
+  not request-rate limiting and does not count handlers that outlive a cancellation or a timeout (the
+  executor's handler ledger bounds those, M6).
 - **Bounded input and an honest end:** the stdio transport reads at most 1 MiB per message; an
   oversized message ends the process with exit 1, never 0, and releases stdin so it cannot hang.
   Confirmation fails closed (`confirmation_required`) until M6.

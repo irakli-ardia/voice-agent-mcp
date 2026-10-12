@@ -89,8 +89,9 @@ reason; there are none.
   `--help`, `tools`, and `mcp` work without it, and `ask` exits 78 when it is missing. `.env.example` lists
   every variable.
 - Runtime data (notes) lives under the application-owned `DATA_DIR`
-  (`.data/` by default, git-ignored), resolved to an absolute path against the working directory
-  at startup. Audio is never stored there: `--audio` reads and `--speech-out` creates only files
+  (`.data/` by default for `ask` and `tools`, git-ignored), resolved to an absolute path against the
+  working directory at startup. `voice-agent mcp` allows no default: it requires an explicit
+  absolute `DATA_DIR` ([MCP](mcp.md#data_dir)). Audio is never stored there: `--audio` reads and `--speech-out` creates only files
   the CLI user names ([audio pipeline](audio-pipeline.md)). It must be on a local filesystem with hard links
   ([filesystem safety](security.md#filesystem-safety)); a host that spawns the process from an
   unknown working directory (an MCP host) should set it to an absolute path.
