@@ -39,18 +39,18 @@
     "@modelcontextprotocol/server": "2.3.1",
     "openai": "7.28.0",
     "pino": "10.4.0",
-    "zod": "4.6.5"
+    "zod": "4.6.7"
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.15",
     "@modelcontextprotocol/client": "2.3.1",
-    "@oxlint/plugins": "1.87.0",
+    "@oxlint/plugins": "1.88.0",
     "@types/node": "24.19.1",
-    "@vitest/coverage-v8": "5.0.3",
-    "fallow": "3.31.0",
-    "oxlint": "1.87.0",
+    "@vitest/coverage-v8": "5.0.5",
+    "fallow": "3.33.1",
+    "oxlint": "1.88.0",
     "tsx": "4.23.15",
     "typescript": "7.0.2",
-    "vitest": "5.0.3"
+    "vitest": "5.0.5"
   }
 }
