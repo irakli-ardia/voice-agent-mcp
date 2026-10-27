@@ -36,14 +36,14 @@
     "check": "npm run docs:check && npm run lint && npm run typecheck && npm run fallow && npm run test:coverage && npm run test:mcp-dist"
   },
   "dependencies": {
-    "@modelcontextprotocol/server": "2.3.1",
-    "openai": "7.28.0",
+    "@modelcontextprotocol/server": "2.4.0",
+    "openai": "7.43.0",
     "pino": "10.4.0",
     "zod": "4.6.5"
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.15",
-    "@modelcontextprotocol/client": "2.3.1",
+    "@modelcontextprotocol/client": "2.4.0",
     "@oxlint/plugins": "1.87.0",
     "@types/node": "24.19.1",
     "@vitest/coverage-v8": "5.0.3",
